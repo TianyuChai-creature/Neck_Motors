@@ -1,0 +1,14 @@
+/build*/
+/logs/
+/python/f32c/native/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.env
+.env.*
+.agents/
+.aws/
+.codex/
+.codegraph/

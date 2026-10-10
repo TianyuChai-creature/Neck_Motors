@@ -1,0 +1,3 @@
+@PACKAGE_INIT@
+include("${CMAKE_CURRENT_LIST_DIR}/f32cTargets.cmake")
+check_required_components(f32c)

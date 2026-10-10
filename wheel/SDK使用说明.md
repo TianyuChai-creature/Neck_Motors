@@ -1,17 +1,20 @@
-# F32C Neck Motors SDK 0.1.1 使用说明
+# F32C Neck Motors SDK 0.1.2 使用说明
 
 ## 1. 发布内容与安装
 
-发布文件为 `wheel/f32c_neck_motors-0.1.1-py3-none-linux_x86_64.whl`，本说明同时复制至 `wheel/SDK使用说明.md`。轮子包含 Python 包 `f32c`、电机共享库 `libf32c.so`、ZED Mini 适配库 `libf32c_zed.so`、C/C++ 公开头文件、CMake 包配置和本说明。Python >=3.10；平台为 Linux x86_64，原生库需要兼容的 glibc/libstdc++。相机还需要目标系统提供兼容的 Stereolabs ZED SDK、CUDA 和驱动；这些系统依赖不在 whl 中。只控制电机不加载相机库。
+发布文件为 `wheel/f32c_neck_motors-0.1.2-py3-none-linux_x86_64.whl`，本说明同时复制至 `wheel/SDK使用说明.md`。轮子包含 Python 包 `f32c`（含 `HeadTracker`）、电机共享库 `libf32c.so`、ZED Mini 适配库 `libf32c_zed.so`、C/C++ 公开头文件、CMake 包配置和本说明。Python >=3.10；平台为 Linux x86_64，原生库需要兼容的 glibc/libstdc++。相机还需要目标系统提供兼容的 Stereolabs ZED SDK、CUDA 和驱动；这些系统依赖不在 whl 中。只控制电机不加载相机库。
 
 ```bash
-python3 -m pip install --upgrade wheel/f32c_neck_motors-0.1.1-py3-none-linux_x86_64.whl
+python3 -m pip install --upgrade wheel/f32c_neck_motors-0.1.2-py3-none-linux_x86_64.whl
 python3 -c 'import f32c; from importlib.metadata import version; print(version("f32c-neck-motors")); print(f32c.native_prefix())'
+python3 -c 'from f32c import HeadTracker, TrackingConfig, TrackingError; print("HeadTracker API available")'
 ```
 
 `native_prefix() -> pathlib.Path` 返回已安装包内的 `native/` 目录，可用于定位头文件、库和 CMake 包。正常安装不需要设置 `F32C_LIBRARY_DIR`；这个环境变量只用于开发时覆盖库目录，指向旧库时新 API 可能不可用。
 
-0.1.1 新增运行时 `set_pi()`，便于持续使能下整定，保留原有配置结构和默认 PI。调参工具与示例位于源码仓库 `examples/`，不随 whl 安装。
+0.1.2 新增 `HeadTracker`、`TrackingConfig` 和 `TrackingError`，供 Python 头部跟随使用；保留 0.1.1 的运行时 `set_pi()`、原有配置结构和默认 PI。调参工具与示例位于源码仓库 `examples/`，不随 whl 安装。
+
+本次 0.1.2 发布是 Python 功能更新。C/C++ 原生源码未变，电机库、相机适配库、公开头文件和 CMake 导出目标复用仓库 0.1.1 whl 的原始字节；打包前校验旧 whl 及原生源码 SHA-256。CMake 版本文件和包内说明更新为 0.1.2，包内 `native/share/doc/f32c/build-info.json` 记录复用来源及文件校验值。当前电脑无 ZED 开发环境，相机适配库未重新编译，也未进行相机或电机真机验收；电机 API 与跟随控制层通过无硬件测试。C/C++ ABI 保持不变。
 
 ## 2. 现场方向、边界与控制语义
 
@@ -59,6 +62,31 @@ with Gimbal2Dof(Config(device="/dev/ttyACM0")) as motor:
 
 本版本未改变这些默认 PI；它们不代表当前固定负载已完成验收。`set_pi()` 成功后更新当前实例的 `config`，不会修改 `Config()` 的默认值。
 
+### 参数设置方式
+
+| 需要设置的参数 | 公开接口 | 生效时机 |
+| --- | --- | --- |
+| 电机连接、ID、初始 PI、速度和加速度 | `Config(...)` → `Gimbal2Dof(config)` | `open()` 复制配置到原生实例；`enable()` 下发控制配置 |
+| 单轴四项电机 PI | `motor.set_pi(axis, speed_kp, speed_ki, pos_kp, pos_ki)` | 已打开且已使能时立即串行下发，临时生效 |
+| 跟随滤波、防抖、轨迹速度/加速度和角度范围 | `TrackingConfig(...)` → `HeadTracker(initial, config)` | 创建跟随生成器时生效；详见 §4.1 |
+
+初始配置示例（数值沿用 SDK 默认值，仅演示设置方法）：
+
+```python
+from f32c import Config, Gimbal2Dof
+
+motor_config = Config(
+    device="/dev/ttyACM0",
+    travel_rpm=80,
+    accel=10,
+    yaw_speed_kp=40, yaw_speed_ki=0, yaw_pos_kp=42, yaw_pos_ki=0,
+    pitch_speed_kp=10, pitch_speed_ki=4, pitch_pos_kp=40, pitch_pos_ki=0,
+)
+motor = Gimbal2Dof(motor_config)  # 此处不打开串口、不使能。
+```
+
+`Config` 的 ID、速度、加速度和 PI 数值应传整数，不能传浮点数或字符串。`open()` 后直接修改 `motor.config` **不会自动下发**，也不会同步修改原生实例已经复制的配置。运行时 PI 必须调用 `set_pi()`；`travel_rpm`、`accel`、地址等目前没有运行时 setter，需要关闭连接并使用新的 `Config` 创建新实例。`TrackingConfig` 只改变软件生成的目标，不修改电机 PI 或固件参数。
+
 | 类型 | 字段 / 用途 |
 | --- | --- |
 | `State` | 不可变数据类：`yaw_deg: float`、`pitch_deg: float`，来自角度反馈，单位度 |
@@ -90,6 +118,8 @@ with Gimbal2Dof(Config(device="/dev/ttyACM0")) as motor:
 
 `with Gimbal2Dof(...) as motor` 相当于进入时 `open()`、退出时 `close()`。除 `ping()` 的查询失败外，操作失败通常抛 `F32CError`；配置或 `set_pi()` 参数校验失败抛 `ValueError`。参数更新中途失败时，电机可能只接受了部分 PI，应终止该次实验并失能，不将它计入已验证配置。
 
+运行时 PI 接口要求 `axis` 精确为 `"yaw"` 或 `"pitch"`，四项增益都必须显式提供，且为 0～256 的 Python `int`；浮点数、字符串和 `bool` 均拒绝。此接口不自动使能，不切换控制模式，不改变当前目标，不发送持久保存命令。
+
 运行时调整示例（会使能；这里的数值仅演示 API）：
 
 ```python
@@ -101,12 +131,153 @@ with Gimbal2Dof(Config(device="/dev/ttyACM0")) as motor:
     try:
         motor.enable()
         motor.set_pi("yaw", speed_kp=40, speed_ki=0, pos_kp=42, pos_ki=0)
+        motor.set_pi("pitch", speed_kp=10, speed_ki=4, pos_kp=40, pos_ki=0)
         print(motor.read())
     finally:
         motor.disable()
 ```
 
 该例不改零点、不调用持久保存，也不自动移到 0°。运行期间参数仍需按实际负载验证。`set_zero()` 会发送保存参数命令，不应在未验收的 PI 试验期间调用，以免保存当前参数。
+
+### 4.1 Python 头部跟随控制层（0.1.2 新增）
+
+`HeadTracker` 在 `set_deg()` 上方生成受约束的目标，不改变原接口的立即下发语义，不加载原生库、不使能、不调整 PI，也不写串口。安装 0.1.2 whl 后即可导入；旧版 0.1.1 whl 不包含此模块。
+
+该层使用速度自适应低通滤波：静止时抑制小幅输入噪声，运动时提高截止频率以减少滞后；随后生成受速度、加速度约束的阻尼轨迹，并用 0.1° 输出滞回避免量化边界反复跳动。连续轨迹保留浮点精度，慢速转头不会因为每帧变化小于一格而被不断舍弃。滤波原理参考 [1€ Filter 作者说明](https://gery.casiez.net/1euro/)，实现不依赖第三方库。
+
+```python
+from f32c import HeadTracker, State, TrackingConfig
+
+# 这两个范围必须由调用方提供实际标定结果，不能照抄模拟示例。
+settings = TrackingConfig(
+    yaw_limits=calibrated_yaw_limits,
+    pitch_limits=calibrated_pitch_limits,
+    max_speed_deg_s=180.0,
+    max_accel_deg_s2=1800.0,
+    response_hz=8.0,
+    min_cutoff_hz=3.0,
+    beta=0.15,
+    derivative_cutoff_hz=1.0,
+    deadband_deg=0.05,
+    hysteresis_deg=0.02,
+    stale_after_s=0.2,
+    max_gap_s=0.1,
+)
+tracker = HeadTracker(initial=motor.read(), config=settings)
+```
+
+坐标沿用电机原始方向，单位为度。头部传感器的反号、零位偏置和幅度映射由调用方先完成。初始化/`reset()` 的 `State` 可来自原生 0～360° 反馈，内部转为有符号角度；目标输入必须使用标定后的有符号坐标。pitch 始终走有符号路径；提供 `yaw_limits` 时 yaw 同样不绕圈，省略时才采用最短循环路径。超界目标抛出 `ValueError`，不会静默裁剪成另一个目标。
+
+| 接口 | 行为 |
+| --- | --- |
+| `HeadTracker(initial: State, config: TrackingConfig, *, timestamp=None)` | 以当前反馈或模拟姿态初始化；不自动回零 |
+| `set_target(yaw_deg, pitch_deg, *, timestamp=None)` | 更新最新目标，不排队、不推进轨迹、不下发命令 |
+| `step(*, timestamp=None) -> State` | 按经过的时间推进轨迹，返回 0.1° 的生成目标；需要定时调用 |
+| `reset(initial: State, *, timestamp=None)` | 用新反馈重新同步，速度归零，清除控制循环超时状态 |
+| `config` | 当前只读的 `TrackingConfig`，不可在运行中替换 |
+| `target` / `filtered_target` | 最新接受的输入 / 经滤波的输入，均为生成过程的诊断值 |
+| `command` / `continuous_command` | 量化目标 / 量化前连续轨迹，不是实测角度 |
+| `velocity_deg_s` | 连续轨迹的 yaw/pitch 速度元组，不是编码器速度 |
+| `stale` / `faulted` | 输入已超时 / 控制循环间隔过长而需要重新同步 |
+
+所有调用使用同一线程和同一单调时钟。默认取 `time.monotonic()`；显式 `timestamp` 也必须来自同一时钟域，不能直接传网络设备时间戳。参数和时间异常不推进轨迹。控制循环长时间暂停后，`TrackingError` 会锁住生成器，直至用新反馈 `reset()`；这避免将积累的时间一次性推进成大幅运动。
+
+配置不可在运行中替换；改变标定范围或轨迹参数时，暂停下发，创建新配置并以新反馈构建生成器，避免旧的路径状态沿用新的边界。可使用数据类的 `replace()`，例如：
+
+```python
+from dataclasses import replace
+from f32c import HeadTracker
+
+# 在同一个电机执行线程、暂停跟随循环后执行。
+settings = replace(settings, min_cutoff_hz=2.5, beta=0.2)
+tracker = HeadTracker(motor.read(), settings)
+# 重新进入循环时将 last_sent 置为 None；不沿用旧生成器的目标和速度。
+```
+
+`TrackingConfig` 的默认值是软件起点，速度/加速度上限仍需在当前负载下验证：
+
+| 参数 | 默认值 | 含义 |
+| --- | --- | --- |
+| `pitch_limits` | 必填 | 实际标定的有符号范围；应留出机械余量 |
+| `yaw_limits` | `None` | 有限范围时走有符号路径；`None` 表示循环轴 |
+| `max_speed_deg_s` / `max_accel_deg_s2` | `180` / `1800` | 生成的连续轨迹速度和加速度上限 |
+| `response_hz` | `8` | 轨迹响应参数，0～20 Hz 内的正值；不是电机闭环带宽 |
+| `min_cutoff_hz` / `beta` | `3` / `0.15` | 滤波最低截止频率 / 随角速度增加截止频率的系数 |
+| `derivative_cutoff_hz` | `1` | 输入角速度估计的滤波截止频率 |
+| `deadband_deg` / `hysteresis_deg` | `0.05` / `0.02` | 锚定目标的噪声门限 / 0.1° 输出格的附加滞回 |
+| `stale_after_s` | `0.2` | 无新目标后开始制动，再保持生成的停止位置 |
+| `max_gap_s` | `0.1` | 单次控制周期最长间隔；超过后须重新读取反馈并同步 |
+
+截止频率、响应参数、速度/加速度上限和超时时间必须为有限正数；`beta`、死区及滞回为有限非负数，均不能传 `bool` 或字符串。另有约束：`response_hz ≤ 20`、`max_gap_s ≤ 0.1`、`max_speed_deg_s × max_gap_s ≤ 179`、`max_accel_deg_s2 ≤ 1e6`、`deadband_deg ≤ 0.5`、`hysteresis_deg < 0.05`。无效配置抛 `ValueError`。
+
+降低 `min_cutoff_hz` 会加强静止滤波，也会增加小动作的滞后；增大 `beta` 会在快速转头时提高滤波响应。增大死区或滞回会减少微小目标更新，也会增加残余指令误差；增大 `response_hz` 或运动上限会更快跟随，但不能据此认定机械负载更稳定。应先保留默认值，并按实际输入噪声、跟随延迟和负载验证结果调整。
+
+范围必须落在 −180°～180° 内，且包含至少一个 0.1° 可表示目标。不能把未知的机械边界当作已标定范围。输入超时制动不等于失能；重负载失能可能导致头部下落，是否失能由应用的退出/故障流程管理。生成的连续轨迹受速度和加速度约束，离散角度帧的差分及真实电机运动不等同于这些诊断值。
+
+典型集成方式如下。调用方提供标定范围和头部角度来源；`latest_head_angles()` 是应用提供的非阻塞函数，仅在有**新样本**时返回映射后的 `(yaw, pitch)`，否则返回 `None`，不应积压旧姿态。反复把同一旧样本当作新样本提交，会使超时检测失效。
+
+```python
+import time
+from f32c import Config, Gimbal2Dof, HeadTracker, TrackingConfig
+
+
+def follow_head(motor_config, yaw_limits, pitch_limits,
+                latest_head_angles, should_run):
+    """应由应用在完成使能确认后、同一个执行线程中调用。"""
+    settings = TrackingConfig(yaw_limits=yaw_limits, pitch_limits=pitch_limits)
+    motor = Gimbal2Dof(motor_config).open()
+    try:
+        motor.enable()  # 应用初始 PI；保持当前姿态，不回零。
+        tracker = HeadTracker(motor.read(), settings)  # 用实测反馈初始化。
+        last_sent = None
+        while should_run():
+            started = time.monotonic()
+            angles = latest_head_angles()
+            if angles is not None:
+                tracker.set_target(*angles, timestamp=started)
+            command = tracker.step(timestamp=started)
+            if command != last_sent:
+                motor.set_deg(command.yaw_deg, command.pitch_deg)
+                last_sent = command
+            time.sleep(max(0, 0.02 - (time.monotonic() - started)))
+    finally:
+        # 失败由调用方处理；关闭连接仍由同一个线程执行。
+        try:
+            motor.disable()
+        finally:
+            motor.close()
+
+
+# 应用调用形式（这些角度范围与回调必须由应用提供）：
+# follow_head(Config(device="/dev/ttyACM0"),
+#             calibrated_yaw_limits, calibrated_pitch_limits,
+#             latest_head_angles, should_run)
+```
+
+输入丢失时仍需继续 `step()` 才能制动。电机反馈查询、相机采集和网络等待不能随意阻塞这个循环；生成器不会消除底层串口的阻塞，也不会判断电机是否真正到位。上例的 20 ms 是计划周期；实际周期包含串口耗时，不能视为实时保证。`F32CError`（通信）、`TrackingError`（控制间隔超过 `max_gap_s`）或 `ValueError`（目标/时间无效）会退出上例并执行清理，调用方应捕获并报告；不要在循环里直接吞掉异常并继续发送。恢复时从新反馈 `reset()`，避免沿用预测位置。
+
+只安装 whl、没有电机也可以运行下面的纯软件示例；其中范围仅用于模拟：
+
+```python
+from f32c import HeadTracker, State, TrackingConfig
+
+tracker = HeadTracker(State(0, 0), TrackingConfig(pitch_limits=(-30, 30)), timestamp=0)
+for tick in range(1, 101):
+    now = tick * 0.02
+    tracker.set_target(10, -5, timestamp=now)
+    command = tracker.step(timestamp=now)
+print(command)  # 生成目标接近 State(yaw_deg=10, pitch_deg=-5)，没有串口操作。
+```
+
+可以在无硬件电脑运行：
+
+```bash
+python3 tests/test_tracking.py
+python3 examples/tracking_demo.py
+python3 examples/tracking_demo.py --csv /tmp/head_tracking_demo.csv
+```
+
+CSV 使用独占创建，重复文件名会报错。模拟分别记录原始输入、滤波输入和生成目标；控制层的软件滞后、静止指令摆幅和最终指令误差不代表机械或画面性能。首次无硬件验证中，±0.06° 均匀静止噪声未造成目标跳动，60°/s 转头示例的生成轨迹滞后约 48 ms；实际负载仍需检查静止画面振动、停稳后 ≤1° 误差、正常转头的跟随延迟，以及边界和失联行为。没有真机验收时不能承诺电机绝对不抖。
 
 ## 5. C++ / C 电机 API
 
@@ -261,4 +432,13 @@ python3 examples/autotune.py --device /dev/ttyACM0 --center 0 0 --enable
 F32C_PYTHON=/usr/bin/python3 ./package_sdk.sh
 ```
 
-打包会构建电机与 ZED 适配库、执行原生测试、安装 SDK 开发文件并生成平台 whl。构建机器需要 ZED/CUDA 开发依赖；源码仅构建电机时可不启用 `F32C_BUILD_ZED`。跨平台需在目标平台重新构建。构建缓存、原始现场日志及本机配置不提交 Git；新 whl 与使用说明存放在 `wheel/`。
+默认打包会构建电机与 ZED 适配库、执行原生测试、安装 SDK 开发文件并生成平台 whl。构建机器需要 CMake、ZED/CUDA 开发依赖和带 pip、setuptools、wheel 的 Python；源码仅构建电机时可不启用 `F32C_BUILD_ZED`。跨平台需在目标平台重新构建。
+
+仅更新 Python 层、且原生源码与仓库 0.1.1 完全一致时，可以使用此次 0.1.2 的复用构建路径（Linux x86_64，仍需 g++ 以执行三个 C++ 测试）：
+
+```bash
+F32C_PYTHON=/path/to/python3 ./package_sdk.sh --reuse-native-wheel \
+    wheel/f32c_neck_motors-0.1.1-py3-none-linux_x86_64.whl
+```
+
+此路径校验旧 whl 完整 SHA-256 以及 `src/`、`include/`、`cmake/` 和 CMakeLists 的原生源码摘要，仅允许版本号变化；原生代码有变化时会拒绝复用，必须重新编译。两种打包路径均运行 Python SDK 检查、伪终端运行时 PI 集成测试、调参测试和跟随测试，并同步 `wheel/SDK使用说明.md`。构建缓存、原始现场日志及本机配置不提交 Git；旧 whl 保留，新 whl 与配套说明存放在 `wheel/`。

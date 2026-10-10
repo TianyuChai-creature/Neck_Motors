@@ -56,7 +56,7 @@ python3 examples/ui.py /dev/ttyACM0
 在仓库根目录运行 `./package_sdk.sh`，产物固定写入 `wheel/`：一个包含 Python 接口、两份本项目共享库和 C++ 开发文件的 Linux 平台轮子。若默认 Python 缺少构建工具，可设置 `F32C_PYTHON=/path/to/python3`。安装只需：
 
 ```bash
-python3 -m pip install wheel/f32c_neck_motors-0.1.1-*.whl
+python3 -m pip install --upgrade wheel/f32c_neck_motors-0.1.2-py3-none-linux_x86_64.whl
 ```
 
 Python 可直接 `import f32c`，无需单独安装 gz 包或设置库路径。C++ 工程可通过 `f32c.native_prefix()` 得到同一轮子里的 CMake 包前缀，并链接 `f32c::f32c`，相机另加 `f32c::f32c_zed`。相机运行仍需系统已有兼容的 ZED SDK。完整示例见 [SDK 使用说明](docs/SDK使用说明.md)；打包时也会复制到 `wheel/SDK使用说明.md`。
@@ -65,7 +65,9 @@ SDK 的 `enable()` 使能并保持当前位置；`set_deg()` 立即下发目标�
 
 0.1.1 新增 `set_pi(axis, speed_kp, speed_ki, pos_kp, pos_ki)`，可在持续使能时更新该轴临时 PI，保留模式与目标，不保存参数；C++/C 也提供对应接口。全部公开 API 的参数、返回值和资源生命周期见 [SDK 使用说明](docs/SDK使用说明.md)。
 
-源码新增 Python `HeadTracker` 跟随控制层，可在 `set_deg()` 上方抑制头部角度噪声，生成受速度/加速度约束的最新目标，保护有符号 pitch 路径，并处理输入丢失与控制循环停顿。它不调整 PI、不自动使能，标定范围由调用方显式提供；现有 0.1.1 whl 还不含新增模块，需使用源码或重新打包。接口与集成循环见 SDK 使用说明 §4.1。
+0.1.2 whl 新增 Python `HeadTracker` 跟随控制层，可在 `set_deg()` 上方抑制头部角度噪声，生成受速度/加速度约束的最新目标，保护有符号 pitch 路径，并处理输入丢失与控制循环停顿。它不调整 PI、不自动使能，标定范围由调用方显式提供；通过 `TrackingConfig` 配置滤波、防抖和轨迹参数。参数设置方式与接入示例见 SDK 使用说明 §3、§4 和 §4.1。
+
+此次发布复用 0.1.1 whl 中未变化的电机/相机原生库，不重新编译相机库；构建来源记录在包内 `native/share/doc/f32c/build-info.json`。仅更新 Python 时，可运行 `./package_sdk.sh --reuse-native-wheel wheel/f32c_neck_motors-0.1.1-py3-none-linux_x86_64.whl`；脚本会校验旧包和原生源码，源码改变则拒绝复用。这一路径需要带 pip、setuptools、wheel 的 Python 和 g++，不需要 CMake/ZED 开发环境。
 
 ```bash
 python3 tests/test_tracking.py

@@ -8,7 +8,7 @@ import threading
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
-from f32c import Config, F32CError, Gimbal2Dof
+from f32c import Config, F32CError, Gimbal2Dof, HeadTracker, TrackingConfig
 
 
 class RuntimePiTests(unittest.TestCase):
@@ -69,6 +69,24 @@ class RuntimePiTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     motor.set_pi(axis, *gains)
             self.assertEqual(len(frames), 4)
+            # Optional target conditioning feeds the unchanged native setter;
+            # it must emit target frames only, without rewriting PI or mode.
+            tracker = HeadTracker(motor.read(), TrackingConfig(pitch_limits=(-30, 40)), timestamp=0)
+            with condition:
+                self.assertTrue(condition.wait_for(lambda: len(frames) >= 6, timeout=1))
+                frames.clear()
+            expected = []
+            for i in range(1, 11):
+                now = i * .02
+                tracker.set_target(3, -3, timestamp=now)
+                command = tracker.step(timestamp=now)
+                motor.set_deg(command.yaw_deg, command.pitch_deg)
+                expected.extend([(1, 3, int(command.yaw_deg * 10) % 3600),
+                                 (2, 3, int(command.pitch_deg * 10) % 3600)])
+            with condition:
+                self.assertTrue(condition.wait_for(lambda: len(frames) >= len(expected), timeout=1))
+                observed = list(frames)
+            self.assertEqual([(f[1], f[2], int.from_bytes(f[3:-2], "big")) for f in observed], expected)
             motor.disable()
             with self.assertRaises(F32CError):
                 motor.set_pi("yaw", 50, 8, 63, 0)

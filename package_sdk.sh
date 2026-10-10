@@ -19,10 +19,11 @@ cmake --build "$tmp_dir/build" -j2
 ctest --test-dir "$tmp_dir/build" --output-on-failure
 F32C_LIBRARY_DIR="$tmp_dir/build" "$python_bin" "$root_dir/tests/test_runtime_pi.py"
 "$python_bin" "$root_dir/tests/test_tuning.py"
+"$python_bin" "$root_dir/tests/test_tracking.py"
 cmake --install "$tmp_dir/build"
 
 cp "$root_dir/pyproject.toml" "$root_dir/setup.py" "$src_dir/"
-cp "$root_dir/python/f32c/__init__.py" "$src_dir/python/f32c/"
+cp "$root_dir/python/f32c/"*.py "$src_dir/python/f32c/"
 cp "$root_dir/docs/SDK使用说明.md" "$src_dir/docs/"
 "$python_bin" -m pip wheel "$src_dir" --no-deps --no-build-isolation -w "$tmp_dir/out"
 

@@ -8,7 +8,8 @@ from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
 
-__all__ = ["Config", "F32CError", "Frame", "Gimbal2Dof", "Setting", "State", "View", "ZedMini", "native_prefix"]
+__all__ = ["Config", "F32CError", "Frame", "Gimbal2Dof", "Setting", "State", "View", "ZedMini", "native_prefix",
+           "HeadTracker", "TrackingConfig", "TrackingError"]
 
 
 class F32CError(RuntimeError):
@@ -322,3 +323,7 @@ class ZedMini:
         if getattr(self, "_handle", None):
             self._lib.f32c_zed_destroy(self._handle)
             self._handle = None
+
+
+# The pure tracking module shares State, so import it after that type is defined.
+from .tracking import HeadTracker, TrackingConfig, TrackingError

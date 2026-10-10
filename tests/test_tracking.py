@@ -24,8 +24,7 @@ class TrackingTests(unittest.TestCase):
         return commands
 
     def test_no_native_library_or_motor_lifecycle_is_used(self):
-        with patch("f32c._motor_library", side_effect=AssertionError("motor opened")), \
-                patch("f32c._zed_library", side_effect=AssertionError("camera opened")):
+        with patch("f32c._motor_library", side_effect=AssertionError("motor opened")):
             tracker = self.tracker()
             self.drive(tracker, (1, 1), 0, 5)
 

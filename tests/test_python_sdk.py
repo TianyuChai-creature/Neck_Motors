@@ -29,10 +29,6 @@ if __name__ == "__main__":
     else:
         raise AssertionError("missing serial device accepted")
 
-    try:
-        camera = f32c.ZedMini()
-    except f32c.F32CError as exc:
-        assert "cannot load libf32c_zed.so" in str(exc)
-    else:
-        assert not camera.is_open()
+    for name in ("ZedMini", "Frame", "View", "Setting", "_zed_library"):
+        assert not hasattr(f32c, name), f"camera API still exposed: {name}"
     print("Python SDK passed")

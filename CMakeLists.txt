@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(f32c_sdk VERSION 0.1.2 LANGUAGES CXX)
+project(f32c_sdk VERSION 0.2.0 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -7,7 +7,7 @@ include(CMakePackageConfigHelpers)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-option(F32C_BUILD_ZED "Build the optional ZED Mini camera SDK" OFF)
+option(F32C_BUILD_ZED "Build the legacy camera example outside the installed motor SDK" OFF)
 
 add_library(f32c SHARED
     src/serial_port.cpp
@@ -62,15 +62,11 @@ if(F32C_BUILD_ZED)
 
     add_executable(f32c_zed_capture examples/zed_capture.cpp)
     target_link_libraries(f32c_zed_capture PRIVATE f32c_zed)
-    install(TARGETS f32c_zed EXPORT f32cTargets LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
 endif()
 
 install(TARGETS f32c EXPORT f32cTargets LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(FILES include/f32c/gimbal.hpp include/f32c/c_api.h
-              include/f32c/camera_c_api.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/f32c)
-install(FILES include/f32c/camera/zed_mini.hpp
-    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/f32c/camera)
 install(FILES docs/SDK使用说明.md DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/f32c)
 install(EXPORT f32cTargets NAMESPACE f32c:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/f32c)
 configure_package_config_file(cmake/f32cConfig.cmake.in

@@ -1,14 +1,13 @@
-"""F32C motor and optional ZED Mini bindings for the installed native SDK."""
+"""F32C motor bindings and head tracking for the installed native SDK."""
 
 from __future__ import annotations
 
 import ctypes as C
 import os
 from dataclasses import dataclass
-from enum import IntEnum
 from pathlib import Path
 
-__all__ = ["Config", "F32CError", "Frame", "Gimbal2Dof", "Setting", "State", "View", "ZedMini", "native_prefix",
+__all__ = ["Config", "F32CError", "Gimbal2Dof", "State", "native_prefix",
            "HeadTracker", "TrackingConfig", "TrackingError"]
 
 
@@ -54,33 +53,6 @@ class State:
     pitch_deg: float
 
 
-@dataclass(frozen=True)
-class Frame:
-    data: bytes  # BGRA8, owned by Python
-    width: int
-    height: int
-    channels: int
-    stride_bytes: int
-    timestamp_ns: int
-
-
-class View(IntEnum):
-    LEFT = 0
-    RIGHT = 1
-    SIDE_BY_SIDE = 2
-
-
-class Setting(IntEnum):
-    BRIGHTNESS = 0
-    CONTRAST = 1
-    SATURATION = 2
-    SHARPNESS = 3
-    GAIN = 4
-    EXPOSURE = 5
-    WHITE_BALANCE_TEMPERATURE = 6
-    LED_STATUS = 7
-
-
 class _CConfig(C.Structure):
     _fields_ = [("device", C.c_char_p), ("baud", C.c_int),
                 ("id_yaw", C.c_uint), ("id_pitch", C.c_uint),
@@ -88,13 +60,6 @@ class _CConfig(C.Structure):
         (name, C.c_uint) for name in ("yaw_speed_kp", "yaw_speed_ki", "yaw_pos_kp", "yaw_pos_ki",
                                       "pitch_speed_kp", "pitch_speed_ki", "pitch_pos_kp", "pitch_pos_ki")
     ]
-
-
-class _CImage(C.Structure):
-    _fields_ = [("data", C.POINTER(C.c_ubyte)), ("size_bytes", C.c_size_t),
-                ("stride_bytes", C.c_size_t), ("width", C.c_int),
-                ("height", C.c_int), ("channels", C.c_int),
-                ("timestamp_ns", C.c_uint64)]
 
 
 def native_prefix() -> Path:
@@ -110,7 +75,7 @@ def _library(filename: str) -> C.CDLL:
                       Path(__file__).resolve().parent / filename]
         root = Path(__file__).resolve().parents[2]
         if (root / "CMakeLists.txt").exists():
-            candidates.append(root / ("build-zed" if "zed" in filename else "build") / filename)
+            candidates.append(root / "build" / filename)
         candidates.append(filename)
     last_error = None
     for path in candidates:
@@ -241,88 +206,6 @@ class Gimbal2Dof:
     def __del__(self):
         if getattr(self, "_handle", None):
             self.close()
-
-
-def _zed_library() -> C.CDLL:
-    lib = _library("libf32c_zed.so")
-    ptr = C.c_void_p
-    _bind(lib, "f32c_zed_create", ptr)
-    _bind(lib, "f32c_zed_destroy", None, ptr)
-    _bind(lib, "f32c_zed_open", C.c_int, ptr, C.c_uint)
-    _bind(lib, "f32c_zed_close", None, ptr)
-    _bind(lib, "f32c_zed_is_open", C.c_int, ptr)
-    _bind(lib, "f32c_zed_grab", C.c_int, ptr)
-    _bind(lib, "f32c_zed_retrieve", C.c_int, ptr, C.c_uint, C.POINTER(_CImage))
-    _bind(lib, "f32c_zed_set_setting", C.c_int, ptr, C.c_uint, C.c_int)
-    _bind(lib, "f32c_zed_get_setting", C.c_int, ptr, C.c_uint, C.POINTER(C.c_int))
-    _bind(lib, "f32c_zed_serial_number", C.c_uint, ptr)
-    _bind(lib, "f32c_zed_last_error", C.c_char_p, ptr)
-    return lib
-
-
-class ZedMini:
-    def __init__(self):
-        self._lib = _zed_library()
-        self._handle = self._lib.f32c_zed_create()
-        if not self._handle:
-            raise F32CError("cannot create ZED camera")
-
-    def last_error(self) -> str:
-        value = self._lib.f32c_zed_last_error(self._handle)
-        return value.decode(errors="replace") if value else ""
-
-    def _check(self, ok: int) -> None:
-        if not ok:
-            raise F32CError(self.last_error() or "ZED camera command failed")
-
-    def open(self, serial_number: int = 0) -> ZedMini:
-        if not isinstance(serial_number, int) or not 0 <= serial_number <= 0xFFFFFFFF:
-            raise ValueError("serial_number must be a 32-bit unsigned integer")
-        self._check(self._lib.f32c_zed_open(self._handle, serial_number))
-        return self
-
-    def close(self) -> None:
-        self._lib.f32c_zed_close(self._handle)
-
-    def is_open(self) -> bool:
-        return bool(self._lib.f32c_zed_is_open(self._handle))
-
-    def grab(self) -> None:
-        self._check(self._lib.f32c_zed_grab(self._handle))
-
-    def retrieve(self, view: View = View.LEFT) -> Frame:
-        image = _CImage()
-        self._check(self._lib.f32c_zed_retrieve(self._handle, int(View(view)), C.byref(image)))
-        if (not image.data or image.width <= 0 or image.height <= 0 or image.channels != 4
-                or image.stride_bytes < image.width * 4
-                or image.size_bytes != image.stride_bytes * image.height):
-            raise F32CError("ZED returned an invalid BGRA image")
-        return Frame(C.string_at(image.data, image.size_bytes), image.width, image.height,
-                     image.channels, image.stride_bytes, image.timestamp_ns)
-
-    def set_setting(self, setting: Setting, value: int) -> None:
-        if not isinstance(value, int) or not -(2**31) <= value < 2**31:
-            raise ValueError("camera setting value must fit a signed 32-bit integer")
-        self._check(self._lib.f32c_zed_set_setting(self._handle, int(Setting(setting)), value))
-
-    def get_setting(self, setting: Setting) -> int:
-        value = C.c_int()
-        self._check(self._lib.f32c_zed_get_setting(self._handle, int(Setting(setting)), C.byref(value)))
-        return value.value
-
-    def serial_number(self) -> int:
-        return self._lib.f32c_zed_serial_number(self._handle)
-
-    def __enter__(self) -> ZedMini:
-        return self.open()
-
-    def __exit__(self, *_exc) -> None:
-        self.close()
-
-    def __del__(self):
-        if getattr(self, "_handle", None):
-            self._lib.f32c_zed_destroy(self._handle)
-            self._handle = None
 
 
 # The pure tracking module shares State, so import it after that type is defined.

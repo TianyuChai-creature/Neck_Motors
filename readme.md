@@ -1,6 +1,6 @@
 # Neck_Motors
 
-F32C 双轴云台控制 SDK。两台电机共用一条 TTL 串口总线，默认 **yaw = ID 1**、**pitch = ID 2**。仓库提供 C++ 共享库、命令行示例、PySide6 控制界面，以及可选的 ZED Mini 相机支持。
+F32C 双轴云台控制 SDK。两台电机共用一条 TTL 串口总线，默认 **yaw = ID 1**、**pitch = ID 2**。仓库提供 C++ 共享库、命令行示例、PySide6 控制界面。
 
 ## 准备
 
@@ -40,7 +40,7 @@ python3 examples/ui.py /dev/ttyACM0
 
 界面启动时连接电机，但初始为失能状态。点击“使能”后会按界面平滑速度将两轴移向已有的 0°，随后可用 yaw/pitch 滑块设置目标角度（界面范围为 −180°～180°），右侧显示实测角度；“直通平滑速度”控制界面的目标推进速度，默认 60°/s。点击“失能”或关闭窗口会发送失能命令。
 
-“到 0°”会移动到**已有零点**；“当前设为零点”会把当前姿态写成零点并保存到电机，重启后仍生效。使能现在会自动运动；确认机械姿态和活动空间后再点击“使能”或使用这两个按钮。点击“开始 Log”会在 `logs/` 生成带时间戳的原始串口收发日志。连接相机时默认开启实时自动曝光和自动增益；手动调整对应滑块会切换为手动值，可用“自动曝光 / 增益”恢复自动模式。
+“到 0°”会移动到**已有零点**；“当前设为零点”会把当前姿态写成零点并保存到电机，重启后仍生效。使能现在会自动运动；确认机械姿态和活动空间后再点击“使能”或使用这两个按钮。点击“开始 Log”会在 `logs/` 生成带时间戳的原始串口收发日志。
 
 ## 命令行示例与 C++ 接口
 
@@ -53,21 +53,21 @@ python3 examples/ui.py /dev/ttyACM0
 
 ## 安装 SDK（C++ / Python）
 
-在仓库根目录运行 `./package_sdk.sh`，产物固定写入 `wheel/`：一个包含 Python 接口、两份本项目共享库和 C++ 开发文件的 Linux 平台轮子。若默认 Python 缺少构建工具，可设置 `F32C_PYTHON=/path/to/python3`。安装只需：
+在仓库根目录运行 `./package_sdk.sh`，产物固定写入 `wheel/`：一个包含 Python 电机接口、`HeadTracker`、电机共享库和 C++ 开发文件的 Linux 平台轮子。若默认 Python 缺少构建工具，可设置 `F32C_PYTHON=/path/to/python3`。安装只需：
 
 ```bash
-python3 -m pip install --upgrade wheel/f32c_neck_motors-0.1.2-py3-none-linux_x86_64.whl
+python3 -m pip install --upgrade wheel/f32c_neck_motors-0.2.0-py3-none-linux_x86_64.whl
 ```
 
-Python 可直接 `import f32c`，无需单独安装 gz 包或设置库路径。C++ 工程可通过 `f32c.native_prefix()` 得到同一轮子里的 CMake 包前缀，并链接 `f32c::f32c`，相机另加 `f32c::f32c_zed`。相机运行仍需系统已有兼容的 ZED SDK。完整示例见 [SDK 使用说明](docs/SDK使用说明.md)；打包时也会复制到 `wheel/SDK使用说明.md`。
+Python 可直接 `import f32c`，无需单独安装 gz 包或设置库路径。C++ 工程可通过 `f32c.native_prefix()` 得到同一轮子里的 CMake 包前缀，并链接 `f32c::f32c`。完整示例见 [SDK 使用说明](docs/SDK使用说明.md)；打包时也会复制到 `wheel/SDK使用说明.md`。
 
-SDK 的 `enable()` 使能并保持当前位置；`set_deg()` 立即下发目标，不包含 UI 的平滑轨迹；`set_zero()` 将**当前位置**写为持久零点。Python 相机 `retrieve()` 返回自持有的 BGRA 字节和时间戳。连接或命令失败会抛出 `F32CError`，上下文管理器退出时关闭设备。
+SDK 的 `enable()` 使能并保持当前位置；`set_deg()` 立即下发目标，不包含 UI 的平滑轨迹；`set_zero()` 将**当前位置**写为持久零点。连接或命令失败会抛出 `F32CError`，上下文管理器退出时关闭设备。
 
 0.1.1 新增 `set_pi(axis, speed_kp, speed_ki, pos_kp, pos_ki)`，可在持续使能时更新该轴临时 PI，保留模式与目标，不保存参数；C++/C 也提供对应接口。全部公开 API 的参数、返回值和资源生命周期见 [SDK 使用说明](docs/SDK使用说明.md)。
 
-0.1.2 whl 新增 Python `HeadTracker` 跟随控制层，可在 `set_deg()` 上方抑制头部角度噪声，生成受速度/加速度约束的最新目标，保护有符号 pitch 路径，并处理输入丢失与控制循环停顿。它不调整 PI、不自动使能，标定范围由调用方显式提供；通过 `TrackingConfig` 配置滤波、防抖和轨迹参数。参数设置方式与接入示例见 SDK 使用说明 §3、§4 和 §4.1。
+0.2.0 whl 提供 Python `HeadTracker` 跟随控制层，可在 `set_deg()` 上方抑制头部角度噪声，生成受速度/加速度约束的最新目标，保护有符号 pitch 路径，并处理输入丢失与控制循环停顿。它不调整 PI、不自动使能，标定范围由调用方显式提供；通过 `TrackingConfig` 配置滤波、防抖和轨迹参数。参数设置方式与接入示例见 SDK 使用说明 §3、§4 和 §4.1。
 
-此次发布复用 0.1.1 whl 中未变化的电机/相机原生库，不重新编译相机库；构建来源记录在包内 `native/share/doc/f32c/build-info.json`。仅更新 Python 时，可运行 `./package_sdk.sh --reuse-native-wheel wheel/f32c_neck_motors-0.1.1-py3-none-linux_x86_64.whl`；脚本会校验旧包和原生源码，源码改变则拒绝复用。这一路径需要带 pip、setuptools、wheel 的 Python 和 g++，不需要 CMake/ZED 开发环境。
+0.2.0 的 whl 和 CMake 导出仅包含电机组件；图像采集由上层应用单独管理。电机库在打包时重新编译，构建需要 CMake、C++17 编译器及带 pip、setuptools、wheel 的 Python，运行电机 SDK 无需其它设备的开发环境。
 
 ```bash
 python3 tests/test_tracking.py
@@ -76,7 +76,7 @@ python3 examples/tracking_demo.py  # 无硬件模拟，只评估生成目标
 
 ## 固定负载调参
 
-工具直接使用当前仓库的 Python SDK 和已构建的 `build/libf32c.so`，不需要额外 Python 依赖，不修改默认 PI，不置零、不保存电机参数。运行期间两轴都会使能，退出或异常时尝试失能。当前标定：pitch 增大为低头，减小为抬头；第一人称 yaw 增大向左、减小向右。yaw 无已知机械限位，相机线缆会增加旋转阻力。pitch 低头极限约 43°，工具的测试目标上限为 40°，给极限留 3° 余量；验证位置的正负阶跃也必须满足此上限。pitch 沿有符号角度推进，避免最短路径绕过低头边界；yaw 仍按单圈最短方向处理。
+工具直接使用当前仓库的 Python SDK 和已构建的 `build/libf32c.so`，不需要额外 Python 依赖，不修改默认 PI，不置零、不保存电机参数。运行期间两轴都会使能，退出或异常时尝试失能。当前标定：pitch 增大为低头，减小为抬头；第一人称 yaw 增大向左、减小向右。yaw 无已知机械限位，负载线缆会增加旋转阻力。pitch 低头极限约 43°，工具的测试目标上限为 40°，给极限留 3° 余量；验证位置的正负阶跃也必须满足此上限。pitch 沿有符号角度推进，避免最短路径绕过低头边界；yaw 仍按单圈最短方向处理。
 
 自动整定先预览，添加 `--enable` 才会连接并执行：
 
@@ -102,24 +102,12 @@ python3 tests/test_tuning.py
 
 统计将位置偏差与抖动分开：均值误差代表静差，峰峰值和标准差描述角度变化；恢复时间要求记录末尾连续落在目标容差内，后续越界会撤销“已恢复”，采样空缺不能算作连续稳定。记录实际采样率；CSV 的两轴角度是串行查询结果，不是同步采样。未测得足够扰动或观察时间不足时，恢复时间为 `null`。受扰时的峰值偏移只能在相同外力条件下比较刚度，无法换算为 Nm/rad；按键标记也包含人的操作延迟。
 
-## 可选：ZED Mini
-
-使用 ZED Mini 时，先安装对应的 ZED SDK 及其构建依赖，再单独构建相机库：
-
-```bash
-cmake -S . -B build-zed -DF32C_BUILD_ZED=ON
-cmake --build build-zed
-./build-zed/f32c_zed_capture
-```
-
-界面会从 `build-zed/libf32c_zed.so` 加载相机库；只有点击“连接相机”才会打开设备。支持左眼、右眼、并排画面及常用运行时图像设置。普通电机功能无需 ZED SDK。
-
 ## 目录
 
 | 路径 | 内容 |
 | --- | --- |
 | `include/f32c/` | C++/C 公共接口与协议 |
-| `src/` | 电机、串口、云台及相机实现 |
+| `src/` | 电机、串口及云台实现 |
 | `examples/` | 命令行示例和 PySide6 界面 |
 | `tests/` | 无硬件协议与串口日志测试 |
 | `docs/` | F32C 电机手册 |

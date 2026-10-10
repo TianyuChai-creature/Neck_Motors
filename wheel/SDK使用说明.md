@@ -1,20 +1,20 @@
-# F32C Neck Motors SDK 0.1.2 使用说明
+# F32C Neck Motors SDK 0.2.0 使用说明
 
 ## 1. 发布内容与安装
 
-发布文件为 `wheel/f32c_neck_motors-0.1.2-py3-none-linux_x86_64.whl`，本说明同时复制至 `wheel/SDK使用说明.md`。轮子包含 Python 包 `f32c`（含 `HeadTracker`）、电机共享库 `libf32c.so`、ZED Mini 适配库 `libf32c_zed.so`、C/C++ 公开头文件、CMake 包配置和本说明。Python >=3.10；平台为 Linux x86_64，原生库需要兼容的 glibc/libstdc++。相机还需要目标系统提供兼容的 Stereolabs ZED SDK、CUDA 和驱动；这些系统依赖不在 whl 中。只控制电机不加载相机库。
+发布文件为 `wheel/f32c_neck_motors-0.2.0-py3-none-linux_x86_64.whl`，本说明同时复制至 `wheel/SDK使用说明.md`。轮子包含 Python 包 `f32c`（含 `HeadTracker`）、电机共享库 `libf32c.so`、电机 C/C++ 公开头文件、CMake 包配置和本说明。本 SDK 负责电机通信、参数设置和跟随目标生成。Python >=3.10；平台为 Linux x86_64，原生库需要兼容的 glibc/libstdc++。
 
 ```bash
-python3 -m pip install --upgrade wheel/f32c_neck_motors-0.1.2-py3-none-linux_x86_64.whl
+python3 -m pip install --upgrade wheel/f32c_neck_motors-0.2.0-py3-none-linux_x86_64.whl
 python3 -c 'import f32c; from importlib.metadata import version; print(version("f32c-neck-motors")); print(f32c.native_prefix())'
 python3 -c 'from f32c import HeadTracker, TrackingConfig, TrackingError; print("HeadTracker API available")'
 ```
 
 `native_prefix() -> pathlib.Path` 返回已安装包内的 `native/` 目录，可用于定位头文件、库和 CMake 包。正常安装不需要设置 `F32C_LIBRARY_DIR`；这个环境变量只用于开发时覆盖库目录，指向旧库时新 API 可能不可用。
 
-0.1.2 新增 `HeadTracker`、`TrackingConfig` 和 `TrackingError`，供 Python 头部跟随使用；保留 0.1.1 的运行时 `set_pi()`、原有配置结构和默认 PI。调参工具与示例位于源码仓库 `examples/`，不随 whl 安装。
+0.2.0 将发布内容收敛为电机 SDK，保留 `HeadTracker`、`TrackingConfig`、`TrackingError` 和运行时 `set_pi()`，沿用原有电机配置结构和默认 PI。图像采集相关的 Python 接口和原生组件不再提供，输入数据由上层应用管理。调参工具与示例位于源码仓库 `examples/`，不随 whl 安装。
 
-本次 0.1.2 发布是 Python 功能更新。C/C++ 原生源码未变，电机库、相机适配库、公开头文件和 CMake 导出目标复用仓库 0.1.1 whl 的原始字节；打包前校验旧 whl 及原生源码 SHA-256。CMake 版本文件和包内说明更新为 0.1.2，包内 `native/share/doc/f32c/build-info.json` 记录复用来源及文件校验值。当前电脑无 ZED 开发环境，相机适配库未重新编译，也未进行相机或电机真机验收；电机 API 与跟随控制层通过无硬件测试。C/C++ ABI 保持不变。
+本次 0.2.0 的电机原生库使用当前源码重新编译，CMake 包仅导出 `f32c::f32c`。电机 C/C++ ABI 不变；Python 电机 API 与跟随控制层通过无硬件测试，机械效果仍需真机验收。
 
 ## 2. 现场方向、边界与控制语义
 
@@ -22,7 +22,7 @@ python3 -c 'from f32c import HeadTracker, TrackingConfig, TrackingError; print("
 
 | 关节 | 增大角度 | 减小角度 | 现场边界 |
 | --- | --- | --- | --- |
-| yaw，默认 ID=1 | 第一人称向左 | 第一人称向右 | 无已知机械限位；相机线缆可能增加阻力 |
+| yaw，默认 ID=1 | 第一人称向左 | 第一人称向右 | 无已知机械限位；负载线缆可能增加阻力 |
 | pitch，默认 ID=2 | 低头 | 抬头 | 低头极限约 43°；正常抬头范围未发现限位 |
 
 SDK 保留电机原始方向，不自动换符号或加零位偏置。这些方向是本机安装约定，不适用于所有安装。若上游 pitch 向上为正，需要在调用方反号映射。
@@ -91,9 +91,6 @@ motor = Gimbal2Dof(motor_config)  # 此处不打开串口、不使能。
 | --- | --- |
 | `State` | 不可变数据类：`yaw_deg: float`、`pitch_deg: float`，来自角度反馈，单位度 |
 | `F32CError` | 库加载、连接或原生操作失败时的异常，继承 `RuntimeError` |
-| `Frame` | 不可变图像数据类：`data: bytes`、`width`、`height`、`channels`、`stride_bytes`、`timestamp_ns` |
-| `View` | `LEFT=0`、`RIGHT=1`、`SIDE_BY_SIDE=2` |
-| `Setting` | 相机设置枚举，见第 6 节 |
 
 ## 4. Python 电机 API
 
@@ -139,9 +136,9 @@ with Gimbal2Dof(Config(device="/dev/ttyACM0")) as motor:
 
 该例不改零点、不调用持久保存，也不自动移到 0°。运行期间参数仍需按实际负载验证。`set_zero()` 会发送保存参数命令，不应在未验收的 PI 试验期间调用，以免保存当前参数。
 
-### 4.1 Python 头部跟随控制层（0.1.2 新增）
+### 4.1 Python 头部跟随控制层
 
-`HeadTracker` 在 `set_deg()` 上方生成受约束的目标，不改变原接口的立即下发语义，不加载原生库、不使能、不调整 PI，也不写串口。安装 0.1.2 whl 后即可导入；旧版 0.1.1 whl 不包含此模块。
+`HeadTracker` 在 `set_deg()` 上方生成受约束的目标，不改变原接口的立即下发语义，不加载原生库、不使能、不调整 PI，也不写串口。安装 0.2.0 whl 后即可导入；旧版 0.1.1 whl 不包含此模块。
 
 该层使用速度自适应低通滤波：静止时抑制小幅输入噪声，运动时提高截止频率以减少滞后；随后生成受速度、加速度约束的阻尼轨迹，并用 0.1° 输出滞回避免量化边界反复跳动。连续轨迹保留浮点精度，慢速转头不会因为每帧变化小于一格而被不断舍弃。滤波原理参考 [1€ Filter 作者说明](https://gery.casiez.net/1euro/)，实现不依赖第三方库。
 
@@ -254,7 +251,7 @@ def follow_head(motor_config, yaw_limits, pitch_limits,
 #             latest_head_angles, should_run)
 ```
 
-输入丢失时仍需继续 `step()` 才能制动。电机反馈查询、相机采集和网络等待不能随意阻塞这个循环；生成器不会消除底层串口的阻塞，也不会判断电机是否真正到位。上例的 20 ms 是计划周期；实际周期包含串口耗时，不能视为实时保证。`F32CError`（通信）、`TrackingError`（控制间隔超过 `max_gap_s`）或 `ValueError`（目标/时间无效）会退出上例并执行清理，调用方应捕获并报告；不要在循环里直接吞掉异常并继续发送。恢复时从新反馈 `reset()`，避免沿用预测位置。
+输入丢失时仍需继续 `step()` 才能制动。电机反馈查询、输入采集和网络等待不能随意阻塞这个循环；生成器不会消除底层串口的阻塞，也不会判断电机是否真正到位。上例的 20 ms 是计划周期；实际周期包含串口耗时，不能视为实时保证。`F32CError`（通信）、`TrackingError`（控制间隔超过 `max_gap_s`）或 `ValueError`（目标/时间无效）会退出上例并执行清理，调用方应捕获并报告；不要在循环里直接吞掉异常并继续发送。恢复时从新反馈 `reset()`，避免沿用预测位置。
 
 只安装 whl、没有电机也可以运行下面的纯软件示例；其中范围仅用于模拟：
 
@@ -277,7 +274,7 @@ python3 examples/tracking_demo.py
 python3 examples/tracking_demo.py --csv /tmp/head_tracking_demo.csv
 ```
 
-CSV 使用独占创建，重复文件名会报错。模拟分别记录原始输入、滤波输入和生成目标；控制层的软件滞后、静止指令摆幅和最终指令误差不代表机械或画面性能。首次无硬件验证中，±0.06° 均匀静止噪声未造成目标跳动，60°/s 转头示例的生成轨迹滞后约 48 ms；实际负载仍需检查静止画面振动、停稳后 ≤1° 误差、正常转头的跟随延迟，以及边界和失联行为。没有真机验收时不能承诺电机绝对不抖。
+CSV 使用独占创建，重复文件名会报错。模拟分别记录原始输入、滤波输入和生成目标；控制层的软件滞后、静止指令摆幅和最终指令误差不代表机械或画面性能。首次无硬件验证中，±0.06° 均匀静止噪声未造成目标跳动，60°/s 转头示例的生成轨迹滞后约 48 ms；实际负载仍需检查静止负载振动、停稳后 ≤1° 误差、正常转头的跟随延迟，以及边界和失联行为。没有真机验收时不能承诺电机绝对不抖。
 
 ## 5. C++ / C 电机 API
 
@@ -291,7 +288,6 @@ cmake -S your_project -B your_project/build -DCMAKE_PREFIX_PATH="$SDK_PREFIX"
 ```cmake
 find_package(f32c CONFIG REQUIRED)
 target_link_libraries(your_app PRIVATE f32c::f32c)
-# 相机功能另加：target_link_libraries(your_app PRIVATE f32c::f32c_zed)
 ```
 
 ### C++：`#include <f32c/gimbal.hpp>`
@@ -332,78 +328,7 @@ target_link_libraries(your_app PRIVATE f32c::f32c)
 
 C/C++ 接口均无异常化错误约定；无效句柄等在 C 桥中直接返回 0，不保证每种参数失败都更新错误文本。调用方必须管理句柄生命周期。
 
-## 6. ZED Mini 相机 API
-
-Python `ZedMini()` 构造对象并加载相机适配库，不连接相机。默认连接参数为 HD720@60、关闭深度、CPU BGRA8；`serial_number=0` 选择首台相机，非零指定序列号，连接后必须是 ZED Mini。
-
-| Python 函数 | 参数、返回值与行为 |
-| --- | --- |
-| `open(serial_number: int = 0) -> ZedMini` | 序列号 0～2³²−1；连接并返回自身；失败抛 `F32CError` |
-| `close() -> None` | 关闭相机；重复关闭可用；不影响电机对象 |
-| `is_open() -> bool` | 是否已连接 |
-| `grab() -> None` | 采集新帧；要求已连接；失败抛异常 |
-| `retrieve(view: View = View.LEFT) -> Frame` | 必须先成功 grab；返回该帧指定视图，复制为 Python 自持有的 BGRA8 bytes |
-| `set_setting(setting: Setting, value: int) -> None` | value 必须能表示为 int32；合法值范围由本机 ZED SDK 校验；EXPOSURE/GAIN 的 -1 为自动模式 |
-| `get_setting(setting: Setting) -> int` | 查询当前设置，要求已连接 |
-| `serial_number() -> int` | 返回连接相机的序列号；关闭后为 0 |
-| `last_error() -> str` | 最近错误文本 |
-| `with ZedMini() as camera` | 进入时 open，退出时 close；对象释放时销毁原生句柄 |
-
-`Frame.data` 长度为 `stride_bytes * height`，每行可能有步长填充；`channels=4`，顺序 BGRA。`timestamp_ns` 为 ZED 图像时间戳，单位纳秒。再次 grab/retrieve 或关闭相机不会破坏已返回的 Python bytes。
-
-| Setting | 数值 | 用途 |
-| --- | --- | --- |
-| `BRIGHTNESS` | 0 | 亮度 |
-| `CONTRAST` | 1 | 对比度 |
-| `SATURATION` | 2 | 饱和度 |
-| `SHARPNESS` | 3 | 锐度 |
-| `GAIN` | 4 | 增益；-1 恢复自动 |
-| `EXPOSURE` | 5 | 曝光；-1 恢复自动 |
-| `WHITE_BALANCE_TEMPERATURE` | 6 | 白平衡色温 |
-| `LED_STATUS` | 7 | 相机 LED 状态 |
-
-```python
-from f32c import Setting, View, ZedMini
-
-with ZedMini() as camera:
-    camera.set_setting(Setting.EXPOSURE, -1)
-    camera.set_setting(Setting.GAIN, -1)
-    camera.grab()
-    frame = camera.retrieve(View.LEFT)
-    print(frame.width, frame.height, frame.stride_bytes, frame.timestamp_ns)
-```
-
-C++ 头文件为 `<f32c/camera/zed_mini.hpp>`，类为 `f32c::camera::ZedMini`：
-
-| 函数 | 返回 / 参数 |
-| --- | --- |
-| `open(unsigned serial_number=0)` | bool |
-| `close()`、`is_open() const` | void、bool |
-| `grab()` | bool |
-| `retrieve(View view, ImageView* out)` | bool；out 不可为空 |
-| `set_setting(Setting setting, int value)` | bool |
-| `get_setting(Setting setting, int* value)` | bool；输出指针不可为空 |
-| `serial_number() const`、`last_error() const` | unsigned、const std::string& |
-
-C++ 枚举名为 `View::Left/Right/SideBySide` 与 `Setting::Brightness/Contrast/Saturation/Sharpness/Gain/Exposure/WhiteBalanceTemperature/LedStatus`。`ImageView` 字段对应 Frame，但 `data` 为借用的 `const uint8_t*`；同一视图再次 retrieve 或相机 close 后可能失效，调用方若需保留应复制。
-
-C 头文件为 `<f32c/camera_c_api.h>`，函数如下：
-
-| 函数 | 返回 / 行为 |
-| --- | --- |
-| `f32c_zed_create()`、`f32c_zed_destroy(camera)` | 创建句柄 / 释放；destroy 后禁止再使用 |
-| `f32c_zed_open(camera, unsigned serial_number)` | 1/0，序列号 0 自动选择 |
-| `f32c_zed_close(camera)`、`f32c_zed_is_open(camera)` | void、1/0 |
-| `f32c_zed_grab(camera)` | 1/0 |
-| `f32c_zed_retrieve(camera, unsigned view, f32c_zed_image_view* out)` | 1/0，视图 0/1/2；输出指针不可为空；data 借用内存 |
-| `f32c_zed_set_setting(camera, unsigned setting, int value)` | 1/0，设置枚举 0～7 |
-| `f32c_zed_get_setting(camera, unsigned setting, int* value)` | 1/0，输出指针不可为空 |
-| `f32c_zed_serial_number(camera)` | unsigned，关闭或 NULL 为 0 |
-| `f32c_zed_last_error(camera)` | SDK 拥有的 const char*；NULL 返回句柄错误文本 |
-
-C 图像结构含 `data`、`size_bytes`、`stride_bytes`、`width`、`height`、`channels`、`timestamp_ns`。枚举常量前缀为 `F32C_ZED_VIEW_*` 与 `F32C_ZED_SETTING_*`，名称见公开头文件。错误处理及借用内存寿命与 C++ 对应。
-
-## 7. 调参工具、验证与重新打包
+## 6. 调参工具、验证与重新打包
 
 在源码仓库中构建并运行无硬件检查：
 
@@ -432,13 +357,6 @@ python3 examples/autotune.py --device /dev/ttyACM0 --center 0 0 --enable
 F32C_PYTHON=/usr/bin/python3 ./package_sdk.sh
 ```
 
-默认打包会构建电机与 ZED 适配库、执行原生测试、安装 SDK 开发文件并生成平台 whl。构建机器需要 CMake、ZED/CUDA 开发依赖和带 pip、setuptools、wheel 的 Python；源码仅构建电机时可不启用 `F32C_BUILD_ZED`。跨平台需在目标平台重新构建。
+打包会重新编译电机库、运行三个 C++ 测试和 Python SDK 检查、伪终端 PI/跟随集成测试、14 个调参测试及 17 个跟随测试，然后生成平台 whl 并同步 `wheel/SDK使用说明.md`。构建机器需要 CMake、支持 C++17 的编译器和带 pip、setuptools、wheel 的 Python。跨平台需在目标平台重新构建。旧版本的原生库复用路径已移除，0.2.0 从源码构建电机库。
 
-仅更新 Python 层、且原生源码与仓库 0.1.1 完全一致时，可以使用此次 0.1.2 的复用构建路径（Linux x86_64，仍需 g++ 以执行三个 C++ 测试）：
-
-```bash
-F32C_PYTHON=/path/to/python3 ./package_sdk.sh --reuse-native-wheel \
-    wheel/f32c_neck_motors-0.1.1-py3-none-linux_x86_64.whl
-```
-
-此路径校验旧 whl 完整 SHA-256 以及 `src/`、`include/`、`cmake/` 和 CMakeLists 的原生源码摘要，仅允许版本号变化；原生代码有变化时会拒绝复用，必须重新编译。两种打包路径均运行 Python SDK 检查、伪终端运行时 PI 集成测试、调参测试和跟随测试，并同步 `wheel/SDK使用说明.md`。构建缓存、原始现场日志及本机配置不提交 Git；旧 whl 保留，新 whl 与配套说明存放在 `wheel/`。
+打包过程中还会验证 whl 的文件清单、校验值、Python 模块及配套说明，确保仅发布电机组件。构建缓存、原始现场日志及本机配置不提交 Git；新 whl 与配套说明存放在 `wheel/`。

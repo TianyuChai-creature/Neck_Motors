@@ -16,10 +16,10 @@ public:
         int travel_rpm = 80;
         uint16_t accel = 10;
         // Selected for the current load; yaw +/-60 degree validation remains incomplete.
-        uint16_t yaw_speed_kp = 100;
-        uint16_t yaw_speed_ki = 64;
-        uint16_t yaw_pos_kp = 200;
-        uint16_t yaw_pos_ki = 32;
+        uint16_t yaw_speed_kp = 50;
+        uint16_t yaw_speed_ki = 8;
+        uint16_t yaw_pos_kp = 63;
+        uint16_t yaw_pos_ki = 0;
         uint16_t pitch_speed_kp = 30;
         uint16_t pitch_speed_ki = 8;
         uint16_t pitch_pos_kp = 60;

@@ -9,8 +9,8 @@ int main() {
     f32c_config c;
     f32c_config_defaults(&c);
     assert(c.yaw_id == 1 && c.pitch_id == 2);
-    assert(c.yaw_speed_kp == 100 && c.yaw_speed_ki == 64);
-    assert(c.yaw_pos_kp == 200 && c.yaw_pos_ki == 32);
+    assert(c.yaw_speed_kp == 50 && c.yaw_speed_ki == 8);
+    assert(c.yaw_pos_kp == 63 && c.yaw_pos_ki == 0);
     assert(c.pitch_speed_kp == 30 && c.pitch_speed_ki == 8);
     assert(c.pitch_pos_kp == 60 && c.pitch_pos_ki == 0);
 

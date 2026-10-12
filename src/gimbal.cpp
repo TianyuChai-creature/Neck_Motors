@@ -135,11 +135,12 @@ bool Gimbal2Dof::enable_impl(const State* initial_target) {
     } else if (!y.read_deg(&ydeg) || !p.read_deg(&pdeg)) {
         return impl_->fail("could not read the current angle before enable");
     }
-    const bool ok = y.enable() &&
-                    y.setup_position(c.travel_rpm, c.accel, c.yaw_speed_kp, c.yaw_speed_ki,
-                                     c.yaw_pos_kp, c.yaw_pos_ki, ydeg) && p.enable() &&
-                    p.setup_position(c.travel_rpm, c.accel, c.pitch_speed_kp, c.pitch_speed_ki,
-                                     c.pitch_pos_kp, c.pitch_pos_ki, pdeg);
+    // Program the complete gain sets without torque before starting either axis.
+    const bool ok = y.disable() && p.disable() &&
+                    y.set_pi(c.yaw_speed_kp, c.yaw_speed_ki, c.yaw_pos_kp, c.yaw_pos_ki) &&
+                    p.set_pi(c.pitch_speed_kp, c.pitch_speed_ki, c.pitch_pos_kp, c.pitch_pos_ki) &&
+                    y.enable() && y.setup_position(c.travel_rpm, c.accel, ydeg) &&
+                    p.enable() && p.setup_position(c.travel_rpm, c.accel, pdeg);
     if (!ok) {
         y.disable();
         p.disable();

@@ -17,9 +17,7 @@ public:
     bool enable();
     bool disable();
     bool set_pi(uint16_t speed_kp, uint16_t speed_ki, uint16_t pos_kp, uint16_t pos_ki);
-    bool setup_position(int travel_rpm, uint16_t accel,
-                        uint16_t speed_kp, uint16_t speed_ki,
-                        uint16_t pos_kp, uint16_t pos_ki, double initial_deg);
+    bool setup_position(int travel_rpm, uint16_t accel, double initial_deg);
     bool set_deg(double deg);
     bool read_deg(double* deg);
     bool set_zero();

@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import ctypes
+from collections import deque
+import math
 import sys
 import time
 from pathlib import Path
@@ -194,6 +196,8 @@ class Panel(QWidget):
         self.camera_fps_started = 0.0
         self.logging = False
         self.log_path = None
+        self.hold_samples = deque()
+        self.hold_target = None
         self.setWindowTitle("F32C 2-DoF + ZED Mini")
 
         self.status = QLabel("失能")
@@ -205,7 +209,7 @@ class Panel(QWidget):
 
         motor_box = QGroupBox("两轴电机")
         motor_layout = QVBoxLayout(motor_box)
-        motor_layout.addWidget(QLabel("使用本负载选定参数（yaw 全范围尚未验收）"))
+        motor_layout.addWidget(QLabel("使用回零保持参数（yaw 全范围尚未验收）"))
         btn_row = QHBoxLayout()
         self.btn_en = QPushButton("使能")
         self.btn_dis = QPushButton("失能")
@@ -293,7 +297,7 @@ class Panel(QWidget):
 
         self.motor_timer = QTimer(self)
         self.motor_timer.timeout.connect(self.poll_motors)
-        self.motor_timer.start(100)
+        self.motor_timer.start(20)
         self.command_timer = QTimer(self)
         self.command_timer.timeout.connect(self.step_targets)
         self.command_timer.start(20)
@@ -327,17 +331,26 @@ class Panel(QWidget):
             if round(command * 10) == round(current * 10):
                 continue
             if not setter(self.handle, command):
-                self.status.setText(f"{axis} 发送失败")
-                continue
+                self.fault(f"{axis} 目标发送失败")
+                return
             self.commanded_angles[axis] = command
 
     def enable(self) -> None:
+        if not self.logging:
+            self.toggle_log()
+        if not self.logging:
+            self.fault("无法记录启动日志，取消使能")
+            return
         y, p = ctypes.c_double(), ctypes.c_double()
         if not self.lib.f32c_read(self.handle, ctypes.byref(y), ctypes.byref(p)):
             self.disable()
             QMessageBox.critical(self, "F32C", "读取当前角度失败，取消使能")
             return
-        if not self.lib.f32c_enable_at(self.handle, y.value, min(40.0, wrap180(p.value))):
+        if not math.isfinite(y.value) or not math.isfinite(p.value) or wrap180(p.value) > 43:
+            self.fault("使能前角度无效或 pitch 超过已知边界")
+            return
+        initial = {"yaw": wrap180(y.value), "pitch": min(40.0, wrap180(p.value))}
+        if not self.lib.f32c_enable_at(self.handle, initial["yaw"], initial["pitch"]):
             self.armed = False
             self.status.setText("使能失败")
             QMessageBox.critical(self, "F32C", "使能失败")
@@ -349,16 +362,54 @@ class Panel(QWidget):
             self.status.setText("失能" if disabled else "失能失败")
             QMessageBox.critical(self, "F32C", "读取当前角度失败，取消回零；" + ("已失能" if disabled else "失能失败，请检查电机"))
             return
-        self.commanded_angles = {"yaw": wrap180(y.value), "pitch": min(40.0, wrap180(p.value))}
+        self.commanded_angles = initial
+        self.hold_samples.clear()
+        self.hold_target = None
         self.armed = True
         self.status.setText("使能")
         self._last_command_tick = time.monotonic()
+        if not self.check_feedback(y.value, p.value):
+            return
         self.go_zero()
 
     def disable(self) -> None:
-        self.lib.f32c_disable(self.handle)
+        disabled = self.lib.f32c_disable(self.handle)
         self.armed = False
-        self.status.setText("失能")
+        self.hold_samples.clear()
+        self.hold_target = None
+        self.status.setText("已发送失能" if disabled else "失能发送失败，请断电")
+
+    def fault(self, reason: str) -> None:
+        self.disable()
+        self.status.setText(reason + "；" + self.status.text())
+
+    def check_feedback(self, yaw: float, pitch: float) -> bool:
+        measured = {"yaw": wrap180(yaw), "pitch": wrap180(pitch)}
+        if (not all(math.isfinite(value) for value in measured.values())
+                or measured["pitch"] > 43 + 1e-9
+                or abs(wrap180(measured["yaw"] - self.commanded_angles["yaw"])) > 3 + 1e-9
+                or abs(measured["pitch"] - self.commanded_angles["pitch"]) > 3 + 1e-9):
+            self.fault("反馈越界或跟随误差超过 3°")
+            return False
+        target = tuple(self.commanded_angles[axis] for axis in ("yaw", "pitch"))
+        if target != self.hold_target:
+            self.hold_samples.clear()
+            self.hold_target = target
+        if any(abs(self.commanded_angles[axis] - self.desired_angles[axis]) > .1
+               for axis in ("yaw", "pitch")):
+            self.hold_samples.clear()
+            return True
+        now = time.monotonic()
+        errors = tuple(wrap180(measured[axis] - self.commanded_angles[axis]) for axis in ("yaw", "pitch"))
+        self.hold_samples.append((now, errors))
+        while self.hold_samples and self.hold_samples[0][0] < now - 1:
+            self.hold_samples.popleft()
+        if len(self.hold_samples) >= 3 and any(
+                max(row[1][axis] for row in self.hold_samples) - min(row[1][axis] for row in self.hold_samples) > 1 + 1e-9
+                for axis in (0, 1)):
+            self.fault("保持位置摆幅超过 1°")
+            return False
+        return True
 
     def toggle_log(self) -> None:
         if self.logging:
@@ -403,11 +454,15 @@ class Panel(QWidget):
         if self.lib.f32c_read(self.handle, ctypes.byref(y), ctypes.byref(p)):
             self.yaw.set_meas(f"{wrap180(y.value):.1f}°")
             self.pitch.set_meas(f"{wrap180(p.value):.1f}°")
-            if not self.armed:
+            if self.armed:
+                self.check_feedback(y.value, p.value)
+            else:
                 self.commanded_angles = {"yaw": wrap180(y.value), "pitch": wrap180(p.value)}
         else:
             self.yaw.set_meas("读失败")
             self.pitch.set_meas("读失败")
+            if self.armed:
+                self.fault("电机反馈读取失败")
 
     def zed_error(self) -> str:
         if not self.zed_lib or not self.zed_handle:
@@ -521,6 +576,7 @@ class Panel(QWidget):
     def closeEvent(self, event) -> None:
         self.motor_timer.stop()
         self.command_timer.stop()
+        self.disable()
         self.disconnect_camera()
         if self.logging:
             self.lib.f32c_stop_log(self.handle)

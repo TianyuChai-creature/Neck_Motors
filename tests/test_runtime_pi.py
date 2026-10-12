@@ -57,19 +57,24 @@ class RuntimePiTests(unittest.TestCase):
                     lambda: any(f[1:3] == bytes([2, 3]) and int.from_bytes(f[3:-2], "big") == 3550 for f in frames), timeout=1))
                 for axis in (1, 2):
                     functions = [f[2] for f in frames if f[1] == axis]
-                    self.assertLess(functions.index(3), functions.index(15))
-                    expected = (100, 64, 200, 32) if axis == 1 else (30, 8, 60, 0)
+                    self.assertLess(functions.index(18), functions.index(6))
+                    self.assertLess(functions.index(6), functions.index(0))
+                    self.assertLess(functions.index(0), functions.index(1))
+                    self.assertLess(functions.index(1), functions.index(3))
+                    expected = (50, 8, 63, 0) if axis == 1 else (30, 8, 60, 0)
                     self.assertEqual([int.from_bytes(f[3:-2], "big") for f in frames
                                       if f[1] == axis and f[2] in (15, 16, 17, 18)], list(expected))
+                self.assertLess(max(i for i, f in enumerate(frames) if f[2] in (15, 16, 17, 18)),
+                                min(i for i, f in enumerate(frames) if f[2] == 6))
                 frames.clear()
-            motor.set_pi("yaw", 50, 8, 63, 0)
+            motor.set_pi("yaw", 50, 8, 70, 0)
             with condition:
                 self.assertTrue(condition.wait_for(lambda: len(frames) >= 4, timeout=1))
                 observed = list(frames)
             self.assertEqual([(f[1], f[2], int.from_bytes(f[3:-2], "big")) for f in observed],
-                             [(1, 15, 50), (1, 16, 8), (1, 17, 63), (1, 18, 0)])
-            self.assertEqual(motor.config.yaw_pos_kp, 63)
-            self.assertEqual(Config().yaw_pos_kp, 200)
+                             [(1, 15, 50), (1, 16, 8), (1, 17, 70), (1, 18, 0)])
+            self.assertEqual(motor.config.yaw_pos_kp, 70)
+            self.assertEqual(Config().yaw_pos_kp, 63)
             for axis, gains in (("roll", (1, 0, 1, 0)), ("yaw", (257, 0, 1, 0)),
                                 ("pitch", (True, 0, 1, 0)), ("yaw", (2**32 + 50, 0, 1, 0))):
                 with self.assertRaises(ValueError):
@@ -95,11 +100,11 @@ class RuntimePiTests(unittest.TestCase):
             self.assertEqual([(f[1], f[2], int.from_bytes(f[3:-2], "big")) for f in observed], expected)
             motor.disable()
             with self.assertRaises(F32CError):
-                motor.set_pi("yaw", 50, 8, 63, 0)
+                motor.set_pi("yaw", 50, 8, 70, 0)
             with condition:
                 frames.clear()
             motor.enable()
-            self.assertTrue(any(f[1:3] == bytes([1, 17]) and int.from_bytes(f[3:-2], "big") == 63 for f in frames))
+            self.assertTrue(any(f[1:3] == bytes([1, 17]) and int.from_bytes(f[3:-2], "big") == 70 for f in frames))
             self.assertFalse(errors)
             motor.disable()
             with condition:

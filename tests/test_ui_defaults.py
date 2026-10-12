@@ -18,11 +18,12 @@ class Motor:
         self.read_ok = True
         self.sent = []
         self.disabled = 0
+        self.position = [30.0, -20.0]
 
     def f32c_read(self, _handle, yaw, pitch):
         if not self.read_ok:
             return 0
-        yaw._obj.value, pitch._obj.value = 30.0, -20.0
+        yaw._obj.value, pitch._obj.value = self.position
         return 1
 
     def f32c_enable(self, _handle):
@@ -30,7 +31,14 @@ class Motor:
 
     def f32c_enable_at(self, _handle, yaw, pitch):
         assert pitch <= 40
+        self.position = [yaw + .5, pitch - .5]
         return 1
+
+    def f32c_start_log(self, *_args):
+        return 1
+
+    def f32c_stop_log(self, *_args):
+        pass
 
     def f32c_disable(self, _handle):
         self.disabled += 1
@@ -77,7 +85,7 @@ class Camera:
 
 if __name__ == "__main__":
     app = QApplication([])
-    gains = dict(yaw_speed_kp=100, yaw_speed_ki=64, yaw_pos_kp=200, yaw_pos_ki=32,
+    gains = dict(yaw_speed_kp=50, yaw_speed_ki=8, yaw_pos_kp=63, yaw_pos_ki=0,
                  pitch_speed_kp=30, pitch_speed_ki=8, pitch_pos_kp=60, pitch_pos_ki=0)
     native = ui.load_motor_lib()
     observed = {}
@@ -95,6 +103,7 @@ if __name__ == "__main__":
     assert panel.smooth_speed.value() == 5
     assert ui.advance_angle(30, -170, 1, circular=False) == 29
     panel.enable()
+    assert panel.logging
     assert panel.desired_angles == {"yaw": 0.0, "pitch": 0.0}
     assert panel.commanded_angles == {"yaw": 30.0, "pitch": -20.0}
     assert not motor.sent  # Enable queues a smooth return, not an immediate 0° jump.
@@ -109,9 +118,22 @@ if __name__ == "__main__":
     assert (5, -1) in camera.settings and (4, -1) in camera.settings
     panel.disconnect_camera()
 
+    panel.commanded_angles = panel.desired_angles = {"yaw": 0., "pitch": 0.}
+    panel.hold_samples.clear()
+    panel.hold_target = None
+    assert panel.check_feedback(0, 0)
+    assert panel.check_feedback(-.7, 0)
+    assert not panel.check_feedback(.7, 0)
+    assert not panel.armed and motor.disabled == 1
+
+    panel.armed = True
+    motor.position = [5., 0.]
+    panel.poll_motors()
+    assert not panel.armed and motor.disabled == 2
+
     motor.read_ok = False
     with patch.object(ui.QMessageBox, "critical", return_value=0):
         panel.enable()
-    assert motor.disabled == 1 and not panel.armed
+    assert motor.disabled == 3 and not panel.armed
     panel.close()
     print("UI defaults passed")

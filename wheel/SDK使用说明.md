@@ -1,11 +1,11 @@
-# F32C Neck Motors SDK 0.2.4 使用说明
+# F32C Neck Motors SDK 0.2.5 使用说明
 
 ## 1. 发布内容与安装
 
-发布文件为 `wheel/f32c_neck_motors-0.2.4-py3-none-linux_x86_64.whl`，本说明同时复制至 `wheel/SDK使用说明.md`。轮子包含 Python 包 `f32c`（含 `HeadTracker`）、电机共享库 `libf32c.so`、电机 C/C++ 公开头文件、CMake 包配置和本说明。本 SDK 负责电机通信、参数设置和跟随目标生成。Python >=3.10；平台为 Linux x86_64，原生库需要兼容的 glibc/libstdc++。
+发布文件为 `wheel/f32c_neck_motors-0.2.5-py3-none-linux_x86_64.whl`，本说明同时复制至 `wheel/SDK使用说明.md`。轮子包含 Python 包 `f32c`（含 `HeadTracker`）、电机共享库 `libf32c.so`、电机 C/C++ 公开头文件、CMake 包配置和本说明。本 SDK 负责电机通信、参数设置和跟随目标生成。Python >=3.10；平台为 Linux x86_64，原生库需要兼容的 glibc/libstdc++。
 
 ```bash
-python3 -m pip install --upgrade wheel/f32c_neck_motors-0.2.4-py3-none-linux_x86_64.whl
+python3 -m pip install --upgrade wheel/f32c_neck_motors-0.2.5-py3-none-linux_x86_64.whl
 python3 -c 'import f32c; from importlib.metadata import version; print(version("f32c-neck-motors")); print(f32c.native_prefix())'
 python3 -c 'from f32c import HeadTracker, TrackingConfig, TrackingError; print("HeadTracker API available")'
 ```
@@ -14,7 +14,7 @@ python3 -c 'from f32c import HeadTracker, TrackingConfig, TrackingError; print("
 
 0.2.0 将发布内容收敛为电机 SDK，保留 `HeadTracker`、`TrackingConfig`、`TrackingError` 和运行时 `set_pi()`，沿用原有电机配置结构和默认 PI。图像采集相关的 Python 接口和原生组件不再提供，输入数据由上层应用管理。调参工具与示例位于源码仓库 `examples/`，不随 whl 安装。
 
-本次 0.2.4 的电机原生库使用当前源码重新编译，CMake 包仅导出 `f32c::f32c`。电机 C/C++ ABI 不变；Python 电机 API 与跟随控制层通过无硬件测试，机械效果仍需真机验收。
+本次 0.2.5 的电机原生库使用当前源码重新编译，CMake 包仅导出 `f32c::f32c`。电机 C/C++ ABI 不变；本次修正仓库 UI 的跟随误差处理，SDK 默认 PI 与 0.2.4 相同。轮子不包含 UI，更新仓库后运行 `examples/ui.py` 才会使用这次 UI 修正。
 
 ## 2. 现场方向、边界与控制语义
 
@@ -29,7 +29,7 @@ SDK 保留电机原始方向，不自动换符号或加零位偏置。这些方�
 
 单圈目标以 0.1° 为协议分辨率，按当前实现截断量化并对 360° 取模；例如 -10° 与 350° 指向同一位置。电机选择单圈最短路径。`read()` 保留电机反馈值，不转成 ±180°；需要有符号显示时可用 `(value + 180) % 360 - 180`。
 
-`set_deg()` 立即下发目标，不生成轨迹，也不校验本机 43° 机械边界。连续运动应由调用方生成中间目标，并保证整条路径避开极限。调参工具的 pitch 测试目标上限为 40°，包含测试位置和正负阶跃，留出 3° 余量；该保护不是 SDK 全局限位。
+`set_deg()` 立即下发目标，不生成轨迹，也不校验本机 43° 机械边界或限制 yaw 在 ±60°；角度数值超过 60° 本身不会使 SDK 自动失能。连续运动应由调用方生成中间目标，并保证整条路径避开极限。调参工具的 pitch 测试目标上限为 40°，包含测试位置和正负阶跃，留出 3° 余量；该保护不是 SDK 全局限位。
 
 两轴共用一条串口，命令和反馈按轴串行处理，不是同步更新/采样。同一个实例应由一个线程串行访问。串口写成功只代表写入成功，协议没有命令 ACK；不得把它等同于到位、PI 已被反馈验证或成功持久保存。
 
@@ -60,7 +60,7 @@ with Gimbal2Dof(Config(device="/dev/ttyACM0")) as motor:
 | `pitch_speed_kp`, `pitch_speed_ki` | `30`, `8` | pitch 速度环 PI，整数 0～256 |
 | `pitch_pos_kp`, `pitch_pos_ki` | `60`, `0` | pitch 位置环 PI，整数 0～256 |
 
-0.2.2 的高增益组合在实际 UI 使能时振荡，已撤回。0.2.4 在稳定版本基础上仅将 yaw 速度 KI 从 8 调整到 16，其余为 yaw 速度 KP=50、位置 PI=63/0，pitch 速度 PI=30/8、位置 PI=60/0。UI 采用最高 120°/s、最大加速度 600°/s² 的 `HeadTracker` 轨迹；相较 0.2.3 的 5°/s 明显提高运动响应，并在接近目标时减速。此组合通过两轮实际 UI 回零及 yaw/pitch ±15° 双向切换，末段保持峰峰值最大约 0.4°，最大均值误差约 0.15°。SDK `set_deg()` 仍立即发目标，只有上层采用轨迹生成器时才有限速和加减速。yaw ±60° 全范围、相机并行和重新上电尚未验证。`set_pi()` 更新当前实例，不修改全局默认值。
+0.2.2 的高增益组合在实际 UI 使能时振荡，已撤回。0.2.5 沿用 0.2.4 的参数：yaw 速度 PI=50/16、位置 PI=63/0，pitch 速度 PI=30/8、位置 PI=60/0。UI 采用最高 120°/s、最大加速度 600°/s² 的 `HeadTracker` 轨迹，在接近目标时减速。本次增加按实际反馈暂停参考推进的处理，通过两轮 pitch=0° 时 yaw 的 0°→+60°→−60°→0° 实机动作，以及每 0.2 秒改一次 yaw 目标的连续拖动模拟；固定保持末段两轴峰峰值最大约 0.1°、均值误差绝对值最大约 0.1°。此前 yaw/pitch ±15° 双向切换末段峰峰值最大约 0.4°。这些记录不代表所有 pitch 姿态、外力、相机并行和重新上电均已验证。`set_pi()` 更新当前实例，不修改全局默认值。
 
 ### 参数设置方式
 
@@ -356,7 +356,11 @@ python3 examples/autotune.py --device /dev/ttyACM0 --center 0 0 --enable
 
 人工受扰记录可用 `examples/tune.py` 的 `hold/push/release/report` 命令，详见仓库 readme。自动试验使用目标阶跃，不等同于真实外力冲击；无力传感器时不能给出 Nm/rad 的绝对刚度。线缆阻力可作为现有负载参与整定，实体极限不能用更高 PI 强推。
 
-UI 保留使能后回到已有 0° 并保持，默认最高速度 120°/s、加速度 600°/s²、pitch 指令上限 40°，使用 SDK 的 `HeadTracker` 生成连续加减速目标。启动前自动开启 Log，轨迹从初始下发目标建立。UI 20 ms 计划周期查询反馈，实际周期包含串口/界面耗时。运动中允许误差为 `3 + min(9, 0.12 × 最近0.5秒内最高实际下发速度)` 度，最高12°；运动停止0.5秒后恢复3°上限。到位监测避开初始收敛，进入±0.5°或最长等待1秒后，用1秒窗口检查超过1°摆幅。通信/发送错误、反馈越界、控制周期超过 `HeadTracker.max_gap_s` 等均请求失能；保护不等于物理急停。本次不保存 PI 或改零点。
+UI 保留使能后回到已有 0° 并保持，默认最高速度 120°/s、加速度 600°/s²，使用 SDK 的 `HeadTracker` 生成连续加减速目标。yaw 滑条按用户指定使用范围限制在 −60°～60°，pitch 为 −180°～40°；通过 UI 设置超出范围的滑条数值会裁剪到端点，不因该输入直接失能。如果启动 yaw 已在 ±60° 之外，允许从该实测姿态向内回零，进入范围后收紧轨迹边界。SDK 底层 API 不沿用此 UI 范围。
+
+当下一步目标会使同向跟随误差超过 9° 时，UI 保持上次下发目标并重建轨迹，等实测追上再继续；反向拖动可立即调整目标。这时电机仍保持使能。运动误差保护为 `3 + min(9, 0.12 × 最近0.5秒内最高实际下发速度)` 度，最高 12°；等待跟随期间保留 12°上限，实测误差小于 3°后解除等待，普通运动停止 0.5 秒后恢复 3°上限。若任一轴持续 1.5 秒误差超过 6°，实测位置变化不超过 0.3°，仍请求失能，避免持续推动不动的负载。到位监测避开初始收敛，进入 ±0.5°或最长等待 1 秒后，用 1 秒窗口检查超过 1°摆幅。
+
+启动前自动开启 Log，轨迹从初始下发目标建立。UI 20 ms 计划周期查询反馈，实际周期包含串口/界面耗时。故障时在串口日志旁写入同名 `.fault.json`，记录原因、实际反馈、下发目标、最新期望目标和等待跟随的轴。通信/发送错误、反馈越界、跟随误差超限、持续无进展、保持振荡或控制周期超过 `HeadTracker.max_gap_s` 等均请求失能；保护不等于物理急停。本次不保存 PI 或改零点。
 
 ```bash
 F32C_PYTHON=/usr/bin/python3 ./package_sdk.sh

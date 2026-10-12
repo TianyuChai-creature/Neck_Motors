@@ -1,9 +1,11 @@
 """Hardware-free check of the UI's enable and camera-connect defaults."""
 
+import json
 import os
 import sys
 import time
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -99,6 +101,7 @@ if __name__ == "__main__":
         assert observed == gains
     motor = Motor()
     panel = ui.Panel(motor, 1)
+    assert (panel.yaw.slider.minimum(), panel.yaw.slider.maximum()) == (-600, 600)
     assert panel.pitch.slider.maximum() == 400
     assert panel.smooth_speed.value() == 120
     panel.enable()
@@ -108,9 +111,23 @@ if __name__ == "__main__":
     assert not motor.sent  # Enable queues a smooth return, not an immediate 0° jump.
     panel._last_command_tick = time.monotonic() - 0.02
     panel.step_targets()
+    assert panel.tracker.config.yaw_limits == (-60, 60)
     assert panel.tracker.config.max_accel_deg_s2 == 600
     assert 0 < motor.sent[0][1] < 30
     assert -20 < motor.sent[1][1] < 0
+    for requested, bounded in ((75, 60), (-75, -60)):
+        panel.yaw.set_deg(requested)
+        panel.send("yaw")
+        assert panel.desired_angles["yaw"] == bounded and panel.armed
+    panel.go_zero()
+    panel.commanded_angles = {"yaw": 75., "pitch": 0.}
+    panel.measured_angles = dict(panel.commanded_angles)
+    panel.tracker = None
+    panel._last_command_tick = 5.
+    with patch.object(ui.time, "monotonic", return_value=5.02):
+        panel.step_targets()
+    assert panel.tracker.config.yaw_limits == (-60, 75)
+    assert 0 < panel.commanded_angles["yaw"] < 75 and panel.armed
 
     camera = Camera()
     with patch.object(ui, "load_zed_lib", return_value=camera):
@@ -140,9 +157,39 @@ if __name__ == "__main__":
     panel.poll_motors()
     assert not panel.armed and motor.disabled == 3
 
+    panel.armed = True
+    panel.commanded_angles = {"yaw": 9., "pitch": 0.}
+    panel.desired_angles = {"yaw": 30., "pitch": 0.}
+    panel.measured_angles = {"yaw": 0., "pitch": 0.}
+    panel.tracker = None
+    panel._last_command_tick = 20.
+    before = len(motor.sent)
+    with patch.object(ui.time, "monotonic", return_value=20.02):
+        panel.step_targets()
+        assert panel.commanded_angles["yaw"] == 9 and len(motor.sent) == before
+        assert panel.following_limited == {"yaw"}
+        assert panel.check_feedback(0, 0) and panel.armed
+    panel.desired_angles["yaw"] = 0.
+    with patch.object(ui.time, "monotonic", return_value=20.06):
+        panel.step_targets()
+        assert panel.commanded_angles["yaw"] < 9  # A reversed drag is never held back.
+
+    panel.commanded_angles["yaw"] = 9.
+    panel.progress_samples.clear()
+    for tick in (21., 21.5, 22.):
+        with patch.object(ui.time, "monotonic", return_value=tick):
+            assert panel.check_feedback(0, 0)
+    with TemporaryDirectory() as directory, patch.object(ui.time, "monotonic", return_value=22.5):
+        panel.log_path = Path(directory) / "session.log"
+        assert not panel.check_feedback(0, 0)
+        fault = json.loads(panel.log_path.with_suffix(".fault.json").read_text())
+        assert "无运动进展" in fault["reason"]
+        assert fault["target"]["yaw"] == 9 and fault["measured"]["yaw"] == 0
+    assert not panel.armed and motor.disabled == 4
+
     motor.read_ok = False
     with patch.object(ui.QMessageBox, "critical", return_value=0):
         panel.enable()
-    assert motor.disabled == 4 and not panel.armed
+    assert motor.disabled == 5 and not panel.armed
     panel.close()
     print("UI defaults passed")

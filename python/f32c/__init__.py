@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes as C
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -100,6 +101,7 @@ def _motor_library() -> C.CDLL:
     ptr = C.c_void_p
     _bind(lib, "f32c_open_config", ptr, C.POINTER(_CConfig))
     _bind(lib, "f32c_close", None, ptr)
+    _bind(lib, "f32c_close_checked", C.c_int, ptr)
     _bind(lib, "f32c_last_error", C.c_char_p, ptr)
     for name in ("ping", "enable", "disable", "set_zero"):
         _bind(lib, f"f32c_{name}", C.c_int, ptr)
@@ -143,8 +145,9 @@ class Gimbal2Dof:
 
     def close(self) -> None:
         if self._handle:
-            self._lib.f32c_close(self._handle)
+            ok = self._lib.f32c_close_checked(self._handle)
             self._handle = None
+            self._check(ok)
 
     def last_error(self) -> str:
         value = self._lib.f32c_last_error(self._handle)
@@ -210,7 +213,10 @@ class Gimbal2Dof:
 
     def __del__(self):
         if getattr(self, "_handle", None):
-            self.close()
+            try:
+                self.close()
+            except F32CError as exc:
+                print(f"F32C close failed: {exc}", file=sys.stderr)
 
 
 # The pure tracking module shares State, so import it after that type is defined.

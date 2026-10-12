@@ -36,6 +36,9 @@ int main() {
     f32c::Gimbal2Dof::State after;
     g.read(&after);
     std::printf("after zero  yaw=%.1f  pitch=%.1f\n", after.yaw_deg, after.pitch_deg);
-    g.disable();
+    if (!g.close_checked()) {
+        std::fprintf(stderr, "cleanup failed: %s\n", g.last_error().c_str());
+        return 1;
+    }
     return after.ok ? 0 : 1;
 }

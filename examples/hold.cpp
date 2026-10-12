@@ -48,7 +48,10 @@ int main() {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
-    g.disable();
-    std::printf("disabled\n");
+    if (!g.close_checked()) {
+        std::fprintf(stderr, "cleanup failed: %s\n", g.last_error().c_str());
+        return 1;
+    }
+    std::printf("disable requests sent; motor state unconfirmed\n");
     return 0;
 }

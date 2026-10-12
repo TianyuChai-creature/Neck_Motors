@@ -30,7 +30,10 @@ f32c_gimbal* f32c_open_config(const f32c_config* config);
 /* Existing shorthand; NULL device scans. Returns NULL on open/ping failure. */
 f32c_gimbal* f32c_open(const char* device, unsigned yaw_id, unsigned pitch_id);
 void f32c_close(f32c_gimbal* g);
-/* For a failed open pass NULL; otherwise pass the live handle. */
+/* Always releases g; 1 = disable requests sent, 0 = hardware state unknown.
+   NULL is a successful no-op. On failure use f32c_last_error(NULL). No motor ACK. */
+int f32c_close_checked(f32c_gimbal* g);
+/* For a failed open/checked close pass NULL; otherwise pass the live handle. */
 const char* f32c_last_error(const f32c_gimbal* g);
 
 int f32c_ping(f32c_gimbal* g);

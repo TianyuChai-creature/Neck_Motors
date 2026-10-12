@@ -2,6 +2,7 @@
 #include "f32c/gimbal.hpp"
 
 #include <cstdint>
+#include <cstdio>
 #include <memory>
 #include <string>
 #include <utility>
@@ -78,10 +79,17 @@ f32c_gimbal* f32c_open(const char* device, unsigned yaw_id, unsigned pitch_id) {
 }
 
 void f32c_close(f32c_gimbal* g) {
-    if (!g) return;
+    if (!f32c_close_checked(g))
+        std::fprintf(stderr, "F32C close failed: %s\n", open_error.c_str());
+}
+
+int f32c_close_checked(f32c_gimbal* g) {
+    if (!g) return 1;
     g->g.disable();
-    g->g.close();
+    const bool ok = g->g.close_checked();
+    open_error = ok ? "" : g->g.last_error();
     delete g;
+    return ok ? 1 : 0;
 }
 
 const char* f32c_last_error(const f32c_gimbal* g) {

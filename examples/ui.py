@@ -76,6 +76,10 @@ def load_motor_lib():
     lib.f32c_open_config.argtypes = [ctypes.POINTER(_CConfig)]
     lib.f32c_open_config.restype = ctypes.c_void_p
     lib.f32c_close.argtypes = [ctypes.c_void_p]
+    lib.f32c_close_checked.argtypes = [ctypes.c_void_p]
+    lib.f32c_close_checked.restype = ctypes.c_int
+    lib.f32c_last_error.argtypes = [ctypes.c_void_p]
+    lib.f32c_last_error.restype = ctypes.c_char_p
     lib.f32c_enable.argtypes = [ctypes.c_void_p]
     lib.f32c_enable_at.argtypes = [ctypes.c_void_p, ctypes.c_double, ctypes.c_double]
     lib.f32c_disable.argtypes = [ctypes.c_void_p]
@@ -87,7 +91,6 @@ def load_motor_lib():
         ctypes.POINTER(ctypes.c_double),
         ctypes.POINTER(ctypes.c_double),
     ]
-    lib.f32c_set_zero.argtypes = [ctypes.c_void_p]
     lib.f32c_start_log.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
     lib.f32c_stop_log.argtypes = [ctypes.c_void_p]
     return lib
@@ -188,6 +191,7 @@ class Panel(QWidget):
         self.lib = motor_lib
         self.handle = motor_handle
         self.armed = False
+        self.disable_request_sent = None
         self.zed_lib = None
         self.zed_handle = None
         self.camera_frame_count = 0
@@ -204,7 +208,7 @@ class Panel(QWidget):
         self.progress_samples = deque()
         self.setWindowTitle("F32C 2-DoF + ZED Mini")
 
-        self.status = QLabel("失能")
+        self.status = QLabel("未使能（硬件状态未确认）")
         font = self.status.font()
         font.setBold(True)
         font.setPointSize(12)
@@ -218,12 +222,10 @@ class Panel(QWidget):
         self.btn_en = QPushButton("使能")
         self.btn_dis = QPushButton("失能")
         self.btn_home = QPushButton("到 0°")
-        self.btn_zero = QPushButton("当前设为零点")
         self.btn_en.clicked.connect(self.enable)
         self.btn_dis.clicked.connect(self.disable)
         self.btn_home.clicked.connect(self.go_zero)
-        self.btn_zero.clicked.connect(self.set_zero)
-        for button in (self.btn_en, self.btn_dis, self.btn_home, self.btn_zero):
+        for button in (self.btn_en, self.btn_dis, self.btn_home):
             btn_row.addWidget(button)
         motor_layout.addLayout(btn_row)
         log_row = QHBoxLayout()
@@ -383,16 +385,14 @@ class Panel(QWidget):
             return
         initial = {"yaw": wrap180(y.value), "pitch": min(40.0, wrap180(p.value))}
         if not self.lib.f32c_enable_at(self.handle, initial["yaw"], initial["pitch"]):
-            self.armed = False
-            self.status.setText("使能失败")
-            QMessageBox.critical(self, "F32C", "使能失败")
+            error = self.lib.f32c_last_error(self.handle)
+            self.fault("使能失败：" + (error.decode(errors="replace") if error else "原因未知"))
+            QMessageBox.critical(self, "F32C", self.status.text())
             return
         y, p = ctypes.c_double(), ctypes.c_double()
         if not self.lib.f32c_read(self.handle, ctypes.byref(y), ctypes.byref(p)):
-            disabled = self.lib.f32c_disable(self.handle)
-            self.armed = False
-            self.status.setText("失能" if disabled else "失能失败")
-            QMessageBox.critical(self, "F32C", "读取当前角度失败，取消回零；" + ("已失能" if disabled else "失能失败，请检查电机"))
+            self.disable()
+            QMessageBox.critical(self, "F32C", "读取当前角度失败，取消回零；" + self.status.text())
             return
         self.commanded_angles = initial
         self.tracker = None
@@ -409,8 +409,7 @@ class Panel(QWidget):
             return
         self.go_zero()
 
-    def disable(self) -> None:
-        disabled = self.lib.f32c_disable(self.handle)
+    def disable(self) -> bool:
         self.armed = False
         self.tracker = None
         self.following_limited = set()
@@ -419,13 +418,18 @@ class Panel(QWidget):
         self.hold_target = None
         for samples in self.motion_samples.values():
             samples.clear()
-        self.status.setText("已发送失能" if disabled else "失能发送失败，请断电")
+        self.disable_request_sent = bool(self.lib.f32c_disable(self.handle))
+        self.status.setText("已发送失能请求（硬件状态未确认）" if self.disable_request_sent
+                            else "失能请求失败（硬件状态未知，请断电）")
+        return self.disable_request_sent
 
     def fault(self, reason: str) -> None:
         record = {"reason": reason, "target": dict(self.commanded_angles),
                   "desired": dict(self.desired_angles), "measured": self.measured_angles,
                   "following_limited": sorted(self.following_limited)}
         self.disable()
+        record["disable_request_sent"] = self.disable_request_sent
+        record["hardware_state"] = "unknown"
         if self.log_path is not None:
             try:
                 self.log_path.with_suffix(".fault.json").write_text(json.dumps(record, indent=2) + "\n")
@@ -514,20 +518,6 @@ class Panel(QWidget):
         self.yaw.set_deg(0)
         self.pitch.set_deg(0)
         self.send()
-
-    def set_zero(self) -> None:
-        if not self.armed:
-            QMessageBox.information(self, "置零", "先使能再置零")
-            return
-        if QMessageBox.question(self, "置零", "把当前姿态写成 0 并掉电保存？") != QMessageBox.StandardButton.Yes:
-            return
-        if not self.lib.f32c_set_zero(self.handle):
-            QMessageBox.critical(self, "F32C", "置零失败")
-            return
-        self.yaw.set_deg(0)
-        self.pitch.set_deg(0)
-        self.desired_angles = {"yaw": 0.0, "pitch": 0.0}
-        self.commanded_angles = {"yaw": 0.0, "pitch": 0.0}
 
     def poll_motors(self) -> None:
         y, p = ctypes.c_double(), ctypes.c_double()
@@ -654,14 +644,28 @@ class Panel(QWidget):
             self.camera_fps_started = time.monotonic()
 
     def closeEvent(self, event) -> None:
+        if not self.handle:
+            event.accept()
+            return
         self.motor_timer.stop()
         self.command_timer.stop()
-        self.disable()
+        self.armed = False
+        closed = bool(self.lib.f32c_close_checked(self.handle))
+        error = self.lib.f32c_last_error(None) if not closed else None
+        reason = error.decode(errors="replace") if error else ""
+        self.handle = None
+        self.logging = False
+        self.disable_request_sent = closed
+        if self.log_path is not None:
+            try:
+                self.log_path.with_suffix(".close.json").write_text(json.dumps({
+                    "disable_request_sent": self.disable_request_sent, "close_request_sent": closed,
+                    "hardware_state": "unknown", "error": reason}, indent=2) + "\n")
+            except OSError:
+                pass
+        if not closed:
+            print(f"F32C 关闭清理失败，硬件状态未知，请断电：{reason}", file=sys.stderr)
         self.disconnect_camera()
-        if self.logging:
-            self.lib.f32c_stop_log(self.handle)
-            self.logging = False
-        self.lib.f32c_close(self.handle)
         event.accept()
 
 

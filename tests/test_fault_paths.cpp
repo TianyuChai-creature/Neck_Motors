@@ -1,0 +1,168 @@
+#include "f32c/c_api.h"
+#include "f32c/gimbal.hpp"
+#include "serial_port.hpp"
+
+#include <pty.h>
+#include <poll.h>
+#include <unistd.h>
+
+#include <atomic>
+#include <cassert>
+#include <cerrno>
+#include <chrono>
+#include <cstdio>
+#include <fstream>
+#include <string>
+#include <thread>
+#include <vector>
+
+enum class WriteMode { Normal, Again, Interrupted, Zero, Partial, EnableFails };
+static WriteMode mode = WriteMode::Normal;
+static unsigned calls = 0;
+static unsigned disable_attempts[3] = {};
+static bool enable_failed = false;
+
+extern "C" ssize_t __real_write(int fd, const void* data, size_t size);
+extern "C" ssize_t __wrap_write(int fd, const void* data, size_t size) {
+    const auto* bytes = static_cast<const uint8_t*>(data);
+    ++calls;
+    if (size >= 3 && bytes[0] == 0x7A && bytes[1] <= 2 && bytes[2] == 5)
+        ++disable_attempts[bytes[1]];
+    if (mode == WriteMode::EnableFails && size >= 3 && bytes[2] == 6) {
+        enable_failed = true;
+        errno = EIO;
+        return -1;
+    }
+    if (mode == WriteMode::Zero) return 0;
+    if (mode == WriteMode::Partial && calls == 1) return 1;
+    if (mode == WriteMode::Again || mode == WriteMode::Interrupted || mode == WriteMode::Partial ||
+            (mode == WriteMode::EnableFails && enable_failed)) {
+        errno = mode == WriteMode::Interrupted ? EINTR : EAGAIN;
+        return -1;
+    }
+    return __real_write(fd, data, size);
+}
+
+template<class F> double timed(F operation) {
+    const auto start = std::chrono::steady_clock::now();
+    operation();
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+}
+
+int main() {
+    int master, slave;
+    char device[128] = {};
+    assert(openpty(&master, &slave, device, nullptr, nullptr) == 0);
+
+    f32c::SerialPort port;
+    assert(port.open(device));
+    char log_path[] = "/tmp/f32c_fault_paths_XXXXXX";
+    const int log_fd = mkstemp(log_path);
+    assert(log_fd >= 0);
+    close(log_fd);
+    assert(port.start_log(log_path));
+    const uint8_t frame[] = {0x7A, 1, 5, 0x7E, 0x7B};
+    for (const auto failure : {WriteMode::Again, WriteMode::Interrupted, WriteMode::Zero, WriteMode::Partial}) {
+        mode = failure;
+        calls = 0;
+        const auto elapsed = timed([&] { assert(!port.write_all(frame, sizeof(frame))); });
+        assert(elapsed >= f32c::SerialPort::write_timeout_ms - 10 && elapsed < 300);
+        assert(calls > 1);
+    }
+    port.close();
+    std::ifstream log(log_path);
+    const std::string text((std::istreambuf_iterator<char>(log)), std::istreambuf_iterator<char>());
+    assert(text.find("TX_ERROR write timeout") != std::string::npos);
+    assert(text.find("sent 1/5 bytes") != std::string::npos);
+    unlink(log_path);
+
+    std::atomic<bool> running{true};
+    std::thread emulator([&] {
+        std::vector<uint8_t> buffered;
+        while (running) {
+            pollfd descriptor{master, POLLIN, 0};
+            if (poll(&descriptor, 1, 20) <= 0) continue;
+            uint8_t bytes[128];
+            const auto count = read(master, bytes, sizeof(bytes));
+            assert(count > 0);
+            buffered.insert(buffered.end(), bytes, bytes + count);
+            while (buffered.size() >= 3) {
+                const auto function = buffered[2];
+                const size_t size = function == 14 ? 6 :
+                    (function == 5 || function == 6 || function == 8 || function == 10) ? 5 : 7;
+                if (buffered.size() < size) break;
+                assert(buffered[0] == 0x7A && buffered[size - 1] == 0x7B);
+                if (function == 14) {
+                    const auto address = buffered[1];
+                    const uint8_t reply[] = {0x7A, address, 2, 0, 0, 0, 0,
+                        static_cast<uint8_t>(0x7A ^ address ^ 2), 0x7B};
+                    assert(__real_write(master, reply, sizeof(reply)) == sizeof(reply));
+                }
+                buffered.erase(buffered.begin(), buffered.begin() + size);
+            }
+        }
+    });
+    f32c::Gimbal2Dof::Config config;
+    config.device = device;
+    {
+        mode = WriteMode::Normal;
+        f32c::Gimbal2Dof g(config);
+        assert(g.open() && g.enable_at(0, 0));
+        mode = WriteMode::Again;
+        assert(timed([&] { assert(!g.set_yaw_deg(1)); }) < 300);
+        assert(g.last_error().find("write failed") != std::string::npos);
+        assert(timed([&] { assert(!g.disable()); }) < 600);
+        assert(g.last_error().find("hardware state unknown") != std::string::npos);
+        const auto yaw_attempts = disable_attempts[1], pitch_attempts = disable_attempts[2];
+        assert(!g.set_deg(0, 0) && !g.set_pi(0, 50, 16, 63, 0));
+        assert(g.last_error().find("hardware state unknown") != std::string::npos);
+        assert(timed([&] { assert(!g.close_checked()); }) < 600);
+        assert(disable_attempts[1] > yaw_attempts && disable_attempts[2] > pitch_attempts);
+        assert(!g.close_checked() && !g.open());
+    }
+    {
+        mode = WriteMode::Normal;
+        f32c::Gimbal2Dof g(config);
+        assert(g.open() && g.enable_at(0, 0));
+        mode = WriteMode::Zero;
+        assert(!g.disable());
+        mode = WriteMode::Normal;
+        assert(g.ping());  // Successful feedback must not erase outstanding cleanup.
+        assert(!g.set_deg(0, 0));
+        assert(g.last_error().find("hardware state unknown") != std::string::npos);
+        assert(g.close_checked() && g.close_checked());
+    }
+    {
+        mode = WriteMode::Normal;
+        f32c::Gimbal2Dof g(config);
+        assert(g.open());
+        mode = WriteMode::EnableFails;
+        enable_failed = false;
+        assert(timed([&] { assert(!g.enable_at(0, 0)); }) < 600);
+        assert(g.last_error().find("hardware state unknown") != std::string::npos);
+        const auto yaw_attempts = disable_attempts[1], pitch_attempts = disable_attempts[2];
+        mode = WriteMode::Normal;
+        assert(g.close_checked());
+        assert(disable_attempts[1] > yaw_attempts && disable_attempts[2] > pitch_attempts);
+    }
+    mode = WriteMode::Normal;
+    auto* handle = f32c_open(device, 1, 2);
+    assert(handle && f32c_enable_at(handle, 0, 0));
+    mode = WriteMode::Interrupted;
+    assert(timed([&] { assert(!f32c_close_checked(handle)); }) < 600);
+    assert(std::string(f32c_last_error(nullptr)).find("hardware state unknown") != std::string::npos);
+    assert(f32c_close_checked(nullptr));
+    const auto yaw_attempts = disable_attempts[1], pitch_attempts = disable_attempts[2];
+    assert(timed([&] {
+        mode = WriteMode::Normal;
+        f32c::Gimbal2Dof g(config);
+        assert(g.open() && g.enable_at(0, 0));
+        mode = WriteMode::Again;  // Destructor also attempts both axes with bounded waits.
+    }) < 1000);
+    assert(disable_attempts[1] > yaw_attempts && disable_attempts[2] > pitch_attempts);
+    running = false;
+    emulator.join();
+    close(master);
+    close(slave);
+    std::puts("bounded writes and failed-disable cleanup passed");
+}

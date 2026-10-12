@@ -24,7 +24,7 @@ int main() {
     assert(!g.open());
     assert(g.last_error().find("distinct") != std::string::npos);
     assert(!g.set_deg(0, 0));
-    assert(g.last_error() == "motors are disabled");
+    assert(g.last_error() == "motors are not enabled by this instance");
     assert(!g.enable_at(std::numeric_limits<double>::infinity(), 0));
     assert(g.last_error() == "target angles must be finite");
     assert(!f32c_enable_at(nullptr, 0, 0));
@@ -33,6 +33,8 @@ int main() {
     assert(!g.set_pi(2, 40, 0, 40, 0));
     assert(g.last_error().find("PI axis") != std::string::npos);
     assert(!g.set_pi(0, 40, 0, 40, 0));
-    assert(g.last_error() == "motors are disabled");
+    assert(g.last_error() == "motors are not enabled by this instance");
     assert(!f32c_set_pi(nullptr, 0, 40, 0, 40, 0));
+    assert(g.close_checked());
+    assert(f32c_close_checked(nullptr));
 }

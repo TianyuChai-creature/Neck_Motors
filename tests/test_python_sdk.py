@@ -1,6 +1,7 @@
 """Hardware-free smoke check for the installed Python binding."""
 
 import ctypes
+from unittest.mock import patch
 
 import f32c
 from f32c import _CConfig, _motor_library
@@ -34,4 +35,17 @@ if __name__ == "__main__":
 
     for name in ("ZedMini", "Frame", "View", "Setting", "_zed_library"):
         assert not hasattr(f32c, name), f"camera API still exposed: {name}"
+    motor = f32c.Gimbal2Dof()
+    motor._handle = 1
+    with patch.object(motor._lib, "f32c_close_checked", return_value=0) as close, \
+            patch.object(motor._lib, "f32c_last_error", return_value=b"hardware state unknown"):
+        try:
+            motor.close()
+        except f32c.F32CError as exc:
+            assert "hardware state unknown" in str(exc)
+        else:
+            raise AssertionError("failed cleanup was hidden")
+        assert motor._handle is None
+        motor.close()
+        assert close.call_count == 1
     print("Python SDK passed")

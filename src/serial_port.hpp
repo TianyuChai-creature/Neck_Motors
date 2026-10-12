@@ -9,6 +9,7 @@ namespace f32c {
 
 class SerialPort {
 public:
+    static constexpr int write_timeout_ms = 100;
     SerialPort() = default;
     ~SerialPort() { close(); }
     SerialPort(const SerialPort&) = delete;

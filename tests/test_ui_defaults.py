@@ -1,6 +1,8 @@
 """Hardware-free check of the UI's enable and camera-connect defaults."""
 
 import json
+import io
+from contextlib import redirect_stderr
 import os
 import sys
 import time
@@ -20,6 +22,9 @@ class Motor:
         self.read_ok = True
         self.sent = []
         self.disabled = 0
+        self.disable_ok = True
+        self.close_ok = True
+        self.closed = False
         self.position = [30.0, -20.0]
 
     def f32c_read(self, _handle, yaw, pitch):
@@ -44,7 +49,7 @@ class Motor:
 
     def f32c_disable(self, _handle):
         self.disabled += 1
-        return 1
+        return int(self.disable_ok)
 
     def f32c_set_yaw_deg(self, _handle, value):
         self.sent.append(("yaw", value))
@@ -54,8 +59,12 @@ class Motor:
         self.sent.append(("pitch", value))
         return 1
 
-    def f32c_close(self, _handle):
-        pass
+    def f32c_close_checked(self, _handle):
+        self.closed = True
+        return int(self.close_ok)
+
+    def f32c_last_error(self, _handle):
+        return b"hardware state unknown"
 
 
 class Camera:
@@ -101,6 +110,7 @@ if __name__ == "__main__":
         assert observed == gains
     motor = Motor()
     panel = ui.Panel(motor, 1)
+    assert not hasattr(panel, "btn_zero") and not hasattr(panel, "set_zero")
     assert (panel.yaw.slider.minimum(), panel.yaw.slider.maximum()) == (-600, 600)
     assert panel.pitch.slider.maximum() == 400
     assert panel.smooth_speed.value() == 120
@@ -185,11 +195,24 @@ if __name__ == "__main__":
         fault = json.loads(panel.log_path.with_suffix(".fault.json").read_text())
         assert "无运动进展" in fault["reason"]
         assert fault["target"]["yaw"] == 9 and fault["measured"]["yaw"] == 0
+        assert fault["disable_request_sent"] and fault["hardware_state"] == "unknown"
     assert not panel.armed and motor.disabled == 4
 
     motor.read_ok = False
     with patch.object(ui.QMessageBox, "critical", return_value=0):
         panel.enable()
     assert motor.disabled == 5 and not panel.armed
-    panel.close()
+    motor.disable_ok = motor.close_ok = False
+    assert not panel.disable() and not panel.armed
+    assert "硬件状态未知" in panel.status.text()
+    with TemporaryDirectory() as directory, redirect_stderr(io.StringIO()) as errors:
+        panel.log_path = Path(directory) / "session.log"
+        def camera_cleanup():
+            assert motor.closed  # Motor cleanup must precede camera teardown.
+        with patch.object(panel, "disconnect_camera", side_effect=camera_cleanup):
+            panel.close()
+        result = json.loads(panel.log_path.with_suffix(".close.json").read_text())
+        assert not result["close_request_sent"] and result["hardware_state"] == "unknown"
+        assert "硬件状态未知" in errors.getvalue()
+        assert panel.handle is None
     print("UI defaults passed")

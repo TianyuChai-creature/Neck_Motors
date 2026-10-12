@@ -102,15 +102,24 @@ void SerialPort::close() {
 
 bool SerialPort::write_all(const uint8_t* data, size_t n) {
     if (fd_ < 0) return false;
+    using clock = std::chrono::steady_clock;
+    const auto deadline = clock::now() + std::chrono::milliseconds(write_timeout_ms);
     size_t off = 0;
     while (off < n) {
-        ssize_t w = ::write(fd_, data + off, n - off);
-        if (w < 0) {
-            if (errno == EAGAIN || errno == EINTR) continue;
-            log_text(log_, "TX_ERROR", std::strerror(errno));
+        if (clock::now() >= deadline) {
+            log_text(log_, "TX_ERROR", "write timeout after " + std::to_string(write_timeout_ms) +
+                     " ms, sent " + std::to_string(off) + "/" + std::to_string(n) + " bytes");
             return false;
         }
-        off += static_cast<size_t>(w);
+        ssize_t w = ::write(fd_, data + off, n - off);
+        if (w > 0) {
+            off += static_cast<size_t>(w);
+        } else if (w < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+            log_text(log_, "TX_ERROR", std::strerror(errno));
+            return false;
+        } else {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
     }
     log_bytes(log_, "TX", data, n);
     return true;

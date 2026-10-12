@@ -18,5 +18,9 @@ int main() {
         return 1;
     }
     std::printf("online  yaw=%.1f deg  pitch=%.1f deg\n", s.yaw_deg, s.pitch_deg);
+    if (!g.close_checked()) {
+        std::fprintf(stderr, "cleanup failed: %s\n", g.last_error().c_str());
+        return 1;
+    }
     return 0;
 }

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <system_error>
 #include <utility>
@@ -42,6 +43,7 @@ struct Gimbal2Dof::Impl {
     Motor yaw;
     Motor pitch;
     bool armed = false;
+    bool cleanup_pending = false;
     std::string error;
 
     explicit Impl(Config c)
@@ -51,6 +53,11 @@ struct Gimbal2Dof::Impl {
         error = std::move(message);
         return false;
     }
+
+    bool require_enabled() {
+        return armed || fail(cleanup_pending ? "disable request failed; hardware state unknown"
+                                            : "motors are not enabled by this instance");
+    }
 };
 
 Gimbal2Dof::Gimbal2Dof() : Gimbal2Dof(Config()) {}
@@ -59,7 +66,7 @@ Gimbal2Dof::Gimbal2Dof(Config cfg) : impl_(new Impl(std::move(cfg))) {}
 
 Gimbal2Dof::~Gimbal2Dof() {
     if (impl_) {
-        if (impl_->armed) disable();
+        if (impl_->port.is_open()) close();
         delete impl_;
         impl_ = nullptr;
     }
@@ -67,7 +74,8 @@ Gimbal2Dof::~Gimbal2Dof() {
 
 bool Gimbal2Dof::open() {
     const auto& c = impl_->cfg;
-    if (impl_->armed) return impl_->fail("disable motors before reopening");
+    if (impl_->armed || impl_->cleanup_pending)
+        return impl_->fail("disable requests must succeed before reopening; hardware state unconfirmed");
     if (!c.id_yaw || !c.id_pitch || c.id_yaw == c.id_pitch)
         return impl_->fail("motor IDs must be nonzero and distinct");
     if (c.baud != 9600 && c.baud != 57600 && c.baud != 115200)
@@ -97,8 +105,17 @@ bool Gimbal2Dof::open() {
 }
 
 void Gimbal2Dof::close() {
-    if (impl_->armed) disable();
+    if (!close_checked()) std::fprintf(stderr, "F32C close failed: %s\n", last_error().c_str());
+}
+
+bool Gimbal2Dof::close_checked() {
+    if (!impl_->port.is_open()) {
+        if (impl_->cleanup_pending) return impl_->fail("serial port closed after failed disable; hardware state unknown");
+        return true;
+    }
+    const bool ok = !(impl_->armed || impl_->cleanup_pending) || disable();
     impl_->port.close();
+    return ok;
 }
 
 bool Gimbal2Dof::ping() {
@@ -136,16 +153,17 @@ bool Gimbal2Dof::enable_impl(const State* initial_target) {
         return impl_->fail("could not read the current angle before enable");
     }
     // Program the complete gain sets without torque before starting either axis.
-    const bool ok = y.disable() && p.disable() &&
-                    y.set_pi(c.yaw_speed_kp, c.yaw_speed_ki, c.yaw_pos_kp, c.yaw_pos_ki) &&
+    if (!disable()) return false;
+    impl_->cleanup_pending = true;
+    const bool ok = y.set_pi(c.yaw_speed_kp, c.yaw_speed_ki, c.yaw_pos_kp, c.yaw_pos_ki) &&
                     p.set_pi(c.pitch_speed_kp, c.pitch_speed_ki, c.pitch_pos_kp, c.pitch_pos_ki) &&
                     y.enable() && y.setup_position(c.travel_rpm, c.accel, ydeg) &&
                     p.enable() && p.setup_position(c.travel_rpm, c.accel, pdeg);
     if (!ok) {
-        y.disable();
-        p.disable();
-        impl_->armed = false;
-        return impl_->fail("motor enable or position setup failed");
+        const bool cleaned = disable();
+        return impl_->fail("motor enable or position setup failed; " +
+                          (cleaned ? std::string("disable requests sent, hardware state unconfirmed")
+                                   : impl_->error));
     }
     impl_->armed = true;
     impl_->error.clear();
@@ -156,13 +174,17 @@ bool Gimbal2Dof::disable() {
     const bool a = impl_->yaw.disable();
     const bool b = impl_->pitch.disable();
     impl_->armed = false;
-    if (!a || !b) return impl_->fail("motor disable write failed");
+    impl_->cleanup_pending = !a || !b;
+    if (!a || !b)
+        return impl_->fail(std::string("disable request write failed for ") +
+                           (!a && !b ? "yaw and pitch" : !a ? "yaw" : "pitch") +
+                           "; hardware state unknown");
     impl_->error.clear();
     return true;
 }
 
 bool Gimbal2Dof::set_deg(double yaw_deg, double pitch_deg) {
-    if (!impl_->armed) return impl_->fail("motors are disabled");
+    if (!impl_->require_enabled()) return false;
     if (!std::isfinite(yaw_deg) || !std::isfinite(pitch_deg))
         return impl_->fail("target angles must be finite");
     if (!impl_->yaw.set_deg(yaw_deg)) return impl_->fail("yaw target write failed");
@@ -175,7 +197,7 @@ bool Gimbal2Dof::set_pi(unsigned axis, unsigned speed_kp, unsigned speed_ki, uns
     if (axis > 1) return impl_->fail("PI axis must be 0 (yaw) or 1 (pitch)");
     if (speed_kp > 256 || speed_ki > 256 || pos_kp > 256 || pos_ki > 256)
         return impl_->fail("PI gains must be between 0 and 256");
-    if (!impl_->armed) return impl_->fail("motors are disabled");
+    if (!impl_->require_enabled()) return false;
     auto& motor = axis == 0 ? impl_->yaw : impl_->pitch;
     if (!motor.set_pi(speed_kp, speed_ki, pos_kp, pos_ki))
         return impl_->fail("runtime PI write failed");
@@ -192,7 +214,7 @@ bool Gimbal2Dof::set_pi(unsigned axis, unsigned speed_kp, unsigned speed_ki, uns
 }
 
 bool Gimbal2Dof::set_yaw_deg(double yaw_deg) {
-    if (!impl_->armed) return impl_->fail("motors are disabled");
+    if (!impl_->require_enabled()) return false;
     if (!std::isfinite(yaw_deg)) return impl_->fail("target angle must be finite");
     if (!impl_->yaw.set_deg(yaw_deg)) return impl_->fail("yaw target write failed");
     impl_->error.clear();
@@ -200,7 +222,7 @@ bool Gimbal2Dof::set_yaw_deg(double yaw_deg) {
 }
 
 bool Gimbal2Dof::set_pitch_deg(double pitch_deg) {
-    if (!impl_->armed) return impl_->fail("motors are disabled");
+    if (!impl_->require_enabled()) return false;
     if (!std::isfinite(pitch_deg)) return impl_->fail("target angle must be finite");
     if (!impl_->pitch.set_deg(pitch_deg)) return impl_->fail("pitch target write failed");
     impl_->error.clear();
@@ -225,7 +247,7 @@ bool Gimbal2Dof::read(State* out) {
 }
 
 bool Gimbal2Dof::set_zero() {
-    if (!impl_->armed) return impl_->fail("motors are disabled");
+    if (!impl_->require_enabled()) return false;
     if (!impl_->yaw.set_zero()) return impl_->fail("yaw zero write failed");
     if (!impl_->pitch.set_zero()) return impl_->fail("pitch zero write failed");
     if (!impl_->yaw.save()) return impl_->fail("yaw parameter save failed");

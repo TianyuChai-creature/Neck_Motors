@@ -56,8 +56,10 @@ def validate(path: Path) -> None:
                 contents = archive.read(name).decode().lower()
                 require("zed" not in contents and "camera" not in contents,
                         f"camera target remains in CMake metadata: {name}")
-        require(prefix + "native/include/f32c/gimbal.hpp" in names, "missing C++ motor header")
-        require(prefix + "native/include/f32c/c_api.h" in names, "missing C motor header")
+        for header in ("gimbal.hpp", "c_api.h"):
+            require(archive.read(prefix + "native/include/f32c/" + header) ==
+                    (ROOT / "include/f32c" / header).read_bytes(),
+                    f"installed public header differs from source: {header}")
     print(f"Motor-only wheel contents, source modules, manual and RECORD verified: {path.name}")
 
 

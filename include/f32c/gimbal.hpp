@@ -15,7 +15,7 @@ public:
         uint8_t id_pitch = 2;
         int travel_rpm = 80;
         uint16_t accel = 10;
-        // Selected for the current load; yaw +/-60 degree validation remains incomplete.
+        // Current-load gains; yaw +/-60 passed at pitch=0, other postures need validation.
         uint16_t yaw_speed_kp = 50;
         uint16_t yaw_speed_ki = 16;
         uint16_t yaw_pos_kp = 63;
@@ -42,6 +42,8 @@ public:
 
     bool open();
     void close();
+    // Releases the port even on failure. True means no pending cleanup, not motor ACK.
+    bool close_checked();
 
     bool ping();
     bool enable();

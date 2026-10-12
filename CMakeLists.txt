@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(f32c_sdk VERSION 0.2.5 LANGUAGES CXX)
+project(f32c_sdk VERSION 0.2.6 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -31,10 +31,19 @@ target_link_libraries(test_serial_log PRIVATE f32c util)
 add_executable(test_sdk_api tests/test_sdk_api.cpp)
 target_link_libraries(test_sdk_api PRIVATE f32c)
 
+find_package(Threads REQUIRED)
+add_executable(test_fault_paths tests/test_fault_paths.cpp
+    src/serial_port.cpp src/motor.cpp src/gimbal.cpp src/c_api.cpp)
+target_include_directories(test_fault_paths PRIVATE include src)
+target_link_libraries(test_fault_paths PRIVATE util Threads::Threads)
+target_link_options(test_fault_paths PRIVATE "-Wl,--wrap=write")
+
 enable_testing()
 add_test(NAME protocol COMMAND test_protocol)
 add_test(NAME serial_log COMMAND test_serial_log)
 add_test(NAME sdk_api COMMAND test_sdk_api)
+add_test(NAME fault_paths COMMAND test_fault_paths)
+set_tests_properties(fault_paths PROPERTIES TIMEOUT 10)
 
 add_executable(f32c_ping examples/ping.cpp)
 target_link_libraries(f32c_ping PRIVATE f32c)

@@ -165,6 +165,11 @@ class Gimbal2Dof:
     def disable(self) -> None:
         self._check(self._lib.f32c_disable(self._require_open()))
 
+    def enable_at(self, yaw_deg: float, pitch_deg: float) -> None:
+        """Enable with explicit initial targets; targets are immediate, not smoothed."""
+        _bind(self._lib, "f32c_enable_at", C.c_int, C.c_void_p, C.c_double, C.c_double)
+        self._check(self._lib.f32c_enable_at(self._require_open(), yaw_deg, pitch_deg))
+
     def set_pi(self, axis: str, speed_kp: int, speed_ki: int, pos_kp: int, pos_ki: int) -> None:
         """Update volatile PI while enabled; preserve the current target and mode."""
         if axis not in ("yaw", "pitch"):

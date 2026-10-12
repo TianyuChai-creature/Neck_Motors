@@ -55,6 +55,9 @@ class RuntimePiTests(unittest.TestCase):
             with condition:
                 self.assertTrue(condition.wait_for(
                     lambda: any(f[1:3] == bytes([2, 3]) and int.from_bytes(f[3:-2], "big") == 3550 for f in frames), timeout=1))
+                for axis in (1, 2):
+                    functions = [f[2] for f in frames if f[1] == axis]
+                    self.assertLess(functions.index(3), functions.index(15))
                 frames.clear()
             motor.set_pi("yaw", 50, 8, 63, 0)
             with condition:
@@ -95,6 +98,12 @@ class RuntimePiTests(unittest.TestCase):
             motor.enable()
             self.assertTrue(any(f[1:3] == bytes([1, 17]) and int.from_bytes(f[3:-2], "big") == 63 for f in frames))
             self.assertFalse(errors)
+            motor.disable()
+            with condition:
+                frames.clear()
+            motor.enable_at(5, 40)
+            self.assertTrue(any(f[1:3] == bytes([2, 3]) and int.from_bytes(f[3:-2], "big") == 400 for f in frames))
+            self.assertFalse(any(f[1:3] == bytes([2, 3]) and int.from_bytes(f[3:-2], "big") > 400 for f in frames))
         finally:
             if motor is not None:
                 motor.close()

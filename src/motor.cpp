@@ -31,9 +31,11 @@ bool Motor::set_deg(double deg) { return send(cmd_single_turn_deg(id_, deg)); }
 
 bool Motor::setup_position(int travel_rpm, uint16_t accel,
                            uint16_t speed_kp, uint16_t speed_ki,
-                           uint16_t pos_kp, uint16_t pos_ki) {
+                           uint16_t pos_kp, uint16_t pos_ki, double initial_deg) {
     if (!send(cmd_mode_single_turn_direct(id_))) return false;
     if (!send(cmd_speed_rpm(id_, static_cast<int16_t>(travel_rpm)))) return false;
+    // Latch the hold target before PI writes can drive a stale target.
+    if (!set_deg(initial_deg)) return false;
     if (!send(cmd_accel(id_, accel))) return false;
     return set_pi(speed_kp, speed_ki, pos_kp, pos_ki);
 }

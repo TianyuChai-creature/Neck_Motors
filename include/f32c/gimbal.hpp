@@ -45,6 +45,8 @@ public:
 
     bool ping();
     bool enable();
+    // Enable with explicit initial targets; no smoothing. Existing enable() holds feedback.
+    bool enable_at(double yaw_deg, double pitch_deg);
     bool disable();
     // axis 0: yaw, 1: pitch. Update volatile PI while holding; no save or mode change.
     bool set_pi(unsigned axis, unsigned speed_kp, unsigned speed_ki, unsigned pos_kp, unsigned pos_ki);
@@ -59,6 +61,7 @@ public:
     const std::string& last_error() const;
 
 private:
+    bool enable_impl(const State* initial_target);
     struct Impl;
     Impl* impl_;
 };

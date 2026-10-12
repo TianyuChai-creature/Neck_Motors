@@ -1,11 +1,11 @@
-# F32C Neck Motors SDK 0.2.0 使用说明
+# F32C Neck Motors SDK 0.2.1 使用说明
 
 ## 1. 发布内容与安装
 
-发布文件为 `wheel/f32c_neck_motors-0.2.0-py3-none-linux_x86_64.whl`，本说明同时复制至 `wheel/SDK使用说明.md`。轮子包含 Python 包 `f32c`（含 `HeadTracker`）、电机共享库 `libf32c.so`、电机 C/C++ 公开头文件、CMake 包配置和本说明。本 SDK 负责电机通信、参数设置和跟随目标生成。Python >=3.10；平台为 Linux x86_64，原生库需要兼容的 glibc/libstdc++。
+发布文件为 `wheel/f32c_neck_motors-0.2.1-py3-none-linux_x86_64.whl`，本说明同时复制至 `wheel/SDK使用说明.md`。轮子包含 Python 包 `f32c`（含 `HeadTracker`）、电机共享库 `libf32c.so`、电机 C/C++ 公开头文件、CMake 包配置和本说明。本 SDK 负责电机通信、参数设置和跟随目标生成。Python >=3.10；平台为 Linux x86_64，原生库需要兼容的 glibc/libstdc++。
 
 ```bash
-python3 -m pip install --upgrade wheel/f32c_neck_motors-0.2.0-py3-none-linux_x86_64.whl
+python3 -m pip install --upgrade wheel/f32c_neck_motors-0.2.1-py3-none-linux_x86_64.whl
 python3 -c 'import f32c; from importlib.metadata import version; print(version("f32c-neck-motors")); print(f32c.native_prefix())'
 python3 -c 'from f32c import HeadTracker, TrackingConfig, TrackingError; print("HeadTracker API available")'
 ```
@@ -14,7 +14,7 @@ python3 -c 'from f32c import HeadTracker, TrackingConfig, TrackingError; print("
 
 0.2.0 将发布内容收敛为电机 SDK，保留 `HeadTracker`、`TrackingConfig`、`TrackingError` 和运行时 `set_pi()`，沿用原有电机配置结构和默认 PI。图像采集相关的 Python 接口和原生组件不再提供，输入数据由上层应用管理。调参工具与示例位于源码仓库 `examples/`，不随 whl 安装。
 
-本次 0.2.0 的电机原生库使用当前源码重新编译，CMake 包仅导出 `f32c::f32c`。电机 C/C++ ABI 不变；Python 电机 API 与跟随控制层通过无硬件测试，机械效果仍需真机验收。
+本次 0.2.1 的电机原生库使用当前源码重新编译，CMake 包仅导出 `f32c::f32c`。电机 C/C++ ABI 不变；Python 电机 API 与跟随控制层通过无硬件测试，机械效果仍需真机验收。
 
 ## 2. 现场方向、边界与控制语义
 
@@ -92,6 +92,8 @@ motor = Gimbal2Dof(motor_config)  # 此处不打开串口、不使能。
 | `State` | 不可变数据类：`yaw_deg: float`、`pitch_deg: float`，来自角度反馈，单位度 |
 | `F32CError` | 库加载、连接或原生操作失败时的异常，继承 `RuntimeError` |
 
+0.2.1 调整启动顺序：`enable()` 先在失能状态查询保持位置，然后逐轴使能、设置模式和速度、下发初始保持目标，最后设置加速度和 PI，缩短旧目标在初始化期间驱动电机的时间。新增 `enable_at()` 可显式指定启动目标；通用 SDK 不自动设置本装置的 40° 边界，边界由调参工具和 UI 执行。使能到初始目标之间仍有串口时序间隔，不能保证零瞬态运动。
+
 ## 4. Python 电机 API
 
 `Gimbal2Dof(config: Config | None = None)` 创建对象并加载电机库，不打开串口、不使能。配置省略时使用新的默认 `Config()`。
@@ -102,6 +104,7 @@ motor = Gimbal2Dof(motor_config)  # 此处不打开串口、不使能。
 | `close() -> None` | 无 | 底层尝试失能并关闭连接；重复关闭已关闭对象无操作 |
 | `ping() -> bool` | 无 | 查询两轴是否回应；查询失败返回 `False`，可读 `last_error()`；未打开则抛异常 |
 | `enable() -> None` | 无 | 使能两轴，选择单圈直通模式，应用实例配置并保持当前角度；不自动回零；已使能时不重复初始化 |
+| `enable_at(yaw_deg: float, pitch_deg: float) -> None` | 两个有限角度，单位度 | 0.2.1 新增。使能时优先锁定这两个初始目标，再写入 PI；目标立即下发，不平滑、不限制机械范围。已经使能时相当于 `set_deg()`，不重复初始化；无效角度抛 `F32CError` |
 | `disable() -> None` | 无 | 下发两轴失能；失败抛 `F32CError`，写成功不代表收到电机确认 |
 | `read() -> State` | 无 | 串行读取两轴角度；任一轴失败则抛异常，不返回部分有效 State |
 | `set_deg(yaw_deg: float, pitch_deg: float) -> None` | 两个有限角度，单位度 | 依次下发 yaw、pitch；要求已使能；不平滑、不限机械角度 |
@@ -299,6 +302,7 @@ target_link_libraries(your_app PRIVATE f32c::f32c)
 | `open()` | `bool`；显式路径只打开串口，自动扫描时检查两轴回应；需用 `ping()` 检测显式路径的两轴 |
 | `close()` | `void`；如本对象已使能则尝试失能，随后关闭串口 |
 | `ping()`、`enable()`、`disable()` | `bool`；失败返回 `false`，从 `last_error()` 取原因 |
+| `enable_at(double yaw, double pitch)` | `bool`；显式启动目标，有限数校验，行为同 Python；失败从 `last_error()` 取原因 |
 | `set_deg(double yaw, double pitch)`、`set_yaw_deg(double)`、`set_pitch_deg(double)` | `bool`；角度语义同 Python |
 | `set_pi(unsigned axis, unsigned speed_kp, unsigned speed_ki, unsigned pos_kp, unsigned pos_ki)` | `bool`；`axis=0` 为 yaw，`axis=1` 为 pitch；校验轴和 0～256 范围，要求已使能；不修改模式或目标，不保存 |
 | `read(State* out)` | `bool`；`out` 不可为空。State 含 `ok`、`yaw_deg`、`pitch_deg`；仅返回 true 时整体有效 |
@@ -318,6 +322,7 @@ target_link_libraries(your_app PRIVATE f32c::f32c)
 | `f32c_open(const char* device, unsigned yaw_id, unsigned pitch_id)` | 简化打开入口，其余字段用默认配置；NULL/空 device 自动扫描；失败返回 NULL |
 | `f32c_close(f32c_gimbal* g)` | 尝试两轴失能并释放句柄；返回 void；NULL 无操作；释放后禁止再次使用句柄 |
 | `f32c_ping(g)`、`f32c_enable(g)`、`f32c_disable(g)` | 与 C++ 对应 |
+| `f32c_enable_at(g, double yaw, double pitch)` | 返回 1/0；显式启动目标，语义同 C++；NULL 句柄返回 0 |
 | `f32c_set_deg(g, double yaw, double pitch)` | 两轴单圈目标 |
 | `f32c_set_yaw_deg(g, double deg)`、`f32c_set_pitch_deg(g, double deg)` | 单轴目标 |
 | `f32c_set_pi(g, unsigned axis, unsigned speed_kp, unsigned speed_ki, unsigned pos_kp, unsigned pos_ki)` | 运行时 PI；轴为 0/1，校验四个 unsigned 值均 ≤256，避免窄整型截断 |

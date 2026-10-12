@@ -171,11 +171,11 @@ def run(args):
             if commanded[1] > 43:
                 raise ValueError("initial pitch feedback exceeds the reported ~43 degree limit")
             enable_attempted = True
-            motor.enable()
-            # enable() reads again while applying PI; use its resulting hold position.
+            motor.enable_at(commanded[0], min(PITCH_TEST_MAX, commanded[1]))
             commanded = checked_position(motor.read(), args.limits)
             if commanded[1] > 43:
                 raise ValueError("pitch feedback crossed the reported ~43 degree limit during enable")
+            commanded[1] = min(PITCH_TEST_MAX, commanded[1])
             motor.set_deg(*commanded)
             sent = [quantized(v) for v in commanded]
             desired = commanded[axis]
@@ -243,6 +243,8 @@ def run(args):
                 output.flush()
                 if measured[1] > 43:
                     raise ValueError("pitch feedback crossed the reported ~43 degree limit")
+                if phase in ("hold", "push", "release") and measured[1] > PITCH_TEST_MAX:
+                    raise ValueError("pitch feedback exceeded the 40 degree test limit")
                 if trial is not None:
                     trial[phase].append((elapsed, error))
                 if tick >= next_display:

@@ -15,7 +15,7 @@ import signal
 import tempfile
 import time
 
-from tune import Config, Gimbal2Dof, check_pitch_target, checked_position, quantized, summarize, wrap180
+from tune import Config, Gimbal2Dof, PITCH_TEST_MAX, check_pitch_target, checked_position, quantized, summarize, wrap180
 
 
 class MotionFault(RuntimeError):
@@ -30,7 +30,7 @@ def check_test_pose(center, axis, step):
 
 
 def candidate_values(value, integral=False):
-    values = [value, 0, 2, 4, 8] if integral else [value, round(value * .75), round(value * 1.25), round(value * 1.5)]
+    values = [value, 0, 2, 4, 8, 16, 32, 64] if integral else [value, round(value * .75), round(value * 1.25), round(value * 1.5)]
     return list(dict.fromkeys(max(0 if integral else 1, min(256, v)) for v in values))
 
 
@@ -75,15 +75,16 @@ def evaluate(config, axis, center, args, directory, label, session=None):
                 motor = Gimbal2Dof(replace(config))
                 motor.open()
                 motor.start_log(directory / "serial.log")
-                checked_position(motor.read(), [None, None])
+                initial = checked_position(motor.read(), [None, None])
                 attempted = True
-                motor.enable()
+                motor.enable_at(initial[0], min(PITCH_TEST_MAX, initial[1]))
             else:
                 for name in ("yaw", "pitch"):
                     motor.set_pi(name, *(getattr(config, f"{name}_{gain}")
                                          for gain in ("speed_kp", "speed_ki", "pos_kp", "pos_ki")))
             commanded = [quantized(v) for v in checked_position(motor.read(), [None, None])]
             pitch_start_ceiling = max(43, commanded[1]) + .3
+            commanded[1] = min(PITCH_TEST_MAX, commanded[1])
             motor.set_deg(*commanded)
             sent = list(commanded)
             previous = time.monotonic()
@@ -95,7 +96,6 @@ def evaluate(config, axis, center, args, directory, label, session=None):
                 while time.monotonic() < deadline:
                     tick = time.monotonic()
                     dt, previous = min(max(tick - previous, 0), .05), tick
-                    changed = False
                     for i in (0, 1):
                         delta = desired[i] - commanded[i]
                         if i == 0:
@@ -104,17 +104,16 @@ def evaluate(config, axis, center, args, directory, label, session=None):
                         commanded[i] = wrap180(value)
                         value = quantized(commanded[i])
                         if value != sent[i]:
+                            setter = motor.set_yaw_deg if i == 0 else motor.set_pitch_deg
+                            setter(value)
                             sent[i] = value
-                            changed = True
-                    if changed:
-                        motor.set_deg(*sent)
                     measured = checked_position(motor.read(), [None, None])
                     elapsed = time.monotonic() - started
                     error = wrap180(measured[axis] - center[axis])
                     writer.writerow([elapsed, phase, *sent, *measured, error])
                     output.flush()
-                    if measured[1] > (pitch_start_ceiling if phase == "approach" else 43):
-                        raise MotionFault("pitch feedback crossed the reported ~43 degree limit")
+                    if measured[1] > (pitch_start_ceiling if phase == "approach" else PITCH_TEST_MAX):
+                        raise MotionFault("pitch feedback exceeded the 40 degree test limit")
                     if any(abs(wrap180(measured[i] - sent[i])) > args.abort_error for i in (0, 1)):
                         raise MotionFault(f"tracking error exceeded {args.abort_error}°: {measured}")
                     history.append((elapsed, [wrap180(measured[i] - center[i]) for i in (0, 1)],
@@ -180,6 +179,8 @@ def parse_args(argv=None):
     parser.add_argument("--center", type=float, nargs=2, metavar=("YAW", "PITCH"), help="test pose; omitted: initial measured pose")
     parser.add_argument("--enable", action="store_true", help="authorize automatic PI writes and small movements")
     parser.add_argument("--baseline-only", action="store_true", help="measure supplied PI without searching gains")
+    parser.add_argument("--gains", nargs="+", choices=("speed_kp", "speed_ki", "pos_kp", "pos_ki"),
+                        default=["speed_kp", "speed_ki", "pos_kp", "pos_ki"], help="gain stages to search")
     parser.add_argument("--hz", type=float, default=50)
     parser.add_argument("--move-speed", type=float, default=5)
     parser.add_argument("--step", type=float, default=3)
@@ -261,7 +262,8 @@ def run(args):
                 position[axis] += offset
                 check_test_pose(position, axis, args.step)
         attempted = True
-        motor.enable()
+        initial = manifest["initial_pose_deg"]
+        motor.enable_at(initial[0], min(PITCH_TEST_MAX, initial[1]))
         def experiment(candidate, axis, position, label):
             directory = root / f"{len(manifest['experiments']):03d}_{label}"
             directory.mkdir()
@@ -278,12 +280,10 @@ def run(args):
             best_passed = all(r["passed"] for r in baseline)
             if args.baseline_only:
                 continue
-            for gain in ("speed_kp", "speed_ki", "pos_kp", "pos_ki"):
+            for gain in args.gains:
                 field = f"{name}_{gain}"
                 base = replace(config)
                 values = candidate_values(getattr(base, field), gain.endswith("ki"))
-                if gain == "speed_ki":
-                    values.extend(v for v in (16, 32) if v not in values)
                 for value in values:
                     if value == getattr(base, field):
                         continue

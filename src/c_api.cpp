@@ -90,6 +90,9 @@ const char* f32c_last_error(const f32c_gimbal* g) {
 
 int f32c_ping(f32c_gimbal* g) { return g && g->g.ping() ? 1 : 0; }
 int f32c_enable(f32c_gimbal* g) { return g && g->g.enable() ? 1 : 0; }
+int f32c_enable_at(f32c_gimbal* g, double yaw_deg, double pitch_deg) {
+    return g && g->g.enable_at(yaw_deg, pitch_deg) ? 1 : 0;
+}
 int f32c_disable(f32c_gimbal* g) { return g && g->g.disable() ? 1 : 0; }
 int f32c_set_pi(f32c_gimbal* g, unsigned axis, unsigned speed_kp, unsigned speed_ki,
                unsigned pos_kp, unsigned pos_ki) {

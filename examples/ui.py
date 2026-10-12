@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import ctypes
+import json
 import sys
 import time
 from pathlib import Path
@@ -26,6 +27,10 @@ from PySide6.QtWidgets import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "python"))
+from f32c import _CConfig
+
+PI_PROFILE = ROOT / "examples" / "tuned_pi.json"
 MOTOR_LIB = ROOT / "build" / "libf32c.so"
 ZED_LIB_CANDIDATES = (ROOT / "build-zed" / "libf32c_zed.so", ROOT / "build" / "libf32c_zed.so")
 
@@ -47,10 +52,10 @@ def wrap180(deg: float) -> float:
     return x
 
 
-def advance_angle(current: float, target: float, max_step: float) -> float:
-    error = wrap180(target - current)
+def advance_angle(current: float, target: float, max_step: float, circular: bool = True) -> float:
+    error = wrap180(target - current) if circular else target - current
     step = max(-max_step, min(max_step, error))
-    return wrap180(current + step)
+    return wrap180(current + step) if circular else current + step
 
 
 class ZedImageView(ctypes.Structure):
@@ -71,8 +76,13 @@ def load_motor_lib():
     lib = ctypes.CDLL(str(MOTOR_LIB))
     lib.f32c_open.restype = ctypes.c_void_p
     lib.f32c_open.argtypes = [ctypes.c_char_p, ctypes.c_uint, ctypes.c_uint]
+    lib.f32c_config_defaults.argtypes = [ctypes.POINTER(_CConfig)]
+    lib.f32c_config_defaults.restype = None
+    lib.f32c_open_config.argtypes = [ctypes.POINTER(_CConfig)]
+    lib.f32c_open_config.restype = ctypes.c_void_p
     lib.f32c_close.argtypes = [ctypes.c_void_p]
     lib.f32c_enable.argtypes = [ctypes.c_void_p]
+    lib.f32c_enable_at.argtypes = [ctypes.c_void_p, ctypes.c_double, ctypes.c_double]
     lib.f32c_disable.argtypes = [ctypes.c_void_p]
     lib.f32c_set_deg.argtypes = [ctypes.c_void_p, ctypes.c_double, ctypes.c_double]
     lib.f32c_set_yaw_deg.argtypes = [ctypes.c_void_p, ctypes.c_double]
@@ -86,6 +96,28 @@ def load_motor_lib():
     lib.f32c_start_log.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
     lib.f32c_stop_log.argtypes = [ctypes.c_void_p]
     return lib
+
+
+def open_motor(lib, device):
+    config = _CConfig()
+    lib.f32c_config_defaults(ctypes.byref(config))
+    config.device = device
+    if not PI_PROFILE.exists():
+        print("整定尚未通过验收，UI 使用原 SDK 默认 PI", file=sys.stderr)
+        return lib.f32c_open_config(ctypes.byref(config))
+    profile = json.loads(PI_PROFILE.read_text())
+    if not isinstance(profile, dict) or not isinstance(profile.get("pi"), dict):
+        raise ValueError("UI PI profile must contain a pi object")
+    gains = profile["pi"]
+    expected = {f"{axis}_{gain}" for axis in ("yaw", "pitch")
+                for gain in ("speed_kp", "speed_ki", "pos_kp", "pos_ki")}
+    if profile.get("status") != "validated" or set(gains) != expected:
+        raise ValueError("UI requires a validated profile containing both axes' four PI gains")
+    if any(type(value) is not int or not 0 <= value <= 256 for value in gains.values()):
+        raise ValueError("UI PI gains must be integers between 0 and 256")
+    for name, value in gains.items():
+        setattr(config, name, value)
+    return lib.f32c_open_config(ctypes.byref(config))
 
 
 def load_zed_lib():
@@ -117,7 +149,7 @@ class AxisRow(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(QLabel(name))
         self.slider = QSlider(Qt.Orientation.Horizontal)
-        self.slider.setRange(-1800, 1800)
+        self.slider.setRange(-1800, 400 if name == "pitch" else 1800)
         self.slider.valueChanged.connect(self._changed)
         self.slider.sliderReleased.connect(lambda: self._on_change(self.name, True))
         layout.addWidget(self.slider, 1)
@@ -168,7 +200,7 @@ class CameraSettingRow(QWidget):
 
 
 class Panel(QWidget):
-    def __init__(self, motor_lib, motor_handle):
+    def __init__(self, motor_lib, motor_handle, pi_label="SDK 默认 PI（整定未验收）"):
         super().__init__()
         self.lib = motor_lib
         self.handle = motor_handle
@@ -190,6 +222,7 @@ class Panel(QWidget):
 
         motor_box = QGroupBox("两轴电机")
         motor_layout = QVBoxLayout(motor_box)
+        motor_layout.addWidget(QLabel(pi_label))
         btn_row = QHBoxLayout()
         self.btn_en = QPushButton("使能")
         self.btn_dis = QPushButton("失能")
@@ -307,7 +340,7 @@ class Panel(QWidget):
             ("pitch", self.lib.f32c_set_pitch_deg),
         ):
             current = self.commanded_angles[axis]
-            command = round(advance_angle(current, self.desired_angles[axis], max_step) * 10) / 10
+            command = round(advance_angle(current, self.desired_angles[axis], max_step, circular=axis == "yaw") * 10) / 10
             if round(command * 10) == round(current * 10):
                 continue
             if not setter(self.handle, command):
@@ -316,7 +349,12 @@ class Panel(QWidget):
             self.commanded_angles[axis] = command
 
     def enable(self) -> None:
-        if not self.lib.f32c_enable(self.handle):
+        y, p = ctypes.c_double(), ctypes.c_double()
+        if not self.lib.f32c_read(self.handle, ctypes.byref(y), ctypes.byref(p)):
+            self.disable()
+            QMessageBox.critical(self, "F32C", "读取当前角度失败，取消使能")
+            return
+        if not self.lib.f32c_enable_at(self.handle, y.value, min(40.0, wrap180(p.value))):
             self.armed = False
             self.status.setText("使能失败")
             QMessageBox.critical(self, "F32C", "使能失败")
@@ -328,7 +366,7 @@ class Panel(QWidget):
             self.status.setText("失能" if disabled else "失能失败")
             QMessageBox.critical(self, "F32C", "读取当前角度失败，取消回零；" + ("已失能" if disabled else "失能失败，请检查电机"))
             return
-        self.commanded_angles = {"yaw": wrap180(y.value), "pitch": wrap180(p.value)}
+        self.commanded_angles = {"yaw": wrap180(y.value), "pitch": min(40.0, wrap180(p.value))}
         self.armed = True
         self.status.setText("使能")
         self._last_command_tick = time.monotonic()
@@ -511,11 +549,14 @@ class Panel(QWidget):
 def main() -> None:
     lib = load_motor_lib()
     device = sys.argv[1].encode() if len(sys.argv) > 1 else None
-    handle = lib.f32c_open(device, 1, 2)
+    try:
+        handle = open_motor(lib, device)
+    except (OSError, ValueError, KeyError) as exc:
+        sys.exit(f"无法加载整定参数: {exc}")
     if not handle:
         sys.exit("open/ping failed — check power, IDs 1/2, and the serial device")
     app = QApplication(sys.argv)
-    window = Panel(lib, handle)
+    window = Panel(lib, handle, "已加载验收通过的 PI" if PI_PROFILE.exists() else "SDK 默认 PI（整定未验收）")
     window.resize(1100, 680)
     window.show()
     sys.exit(app.exec())

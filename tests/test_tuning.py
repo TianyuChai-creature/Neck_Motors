@@ -34,6 +34,7 @@ class Motor:
         self.events = []
         self.position = [0., 0.]
         self.target = [0., 0.]
+        self.axis_commands = []
 
     def __enter__(self):
         self.open()
@@ -66,9 +67,21 @@ class Motor:
     def set_pi(self, axis, *gains):
         self.events.append(("pi", axis, gains))
 
+    def enable_at(self, yaw, pitch):
+        self.enable()
+        self.set_deg(yaw, pitch)
+
     def set_deg(self, yaw, pitch):
         self.target = [yaw, pitch]
         self.events.append((yaw, pitch))
+
+    def set_yaw_deg(self, yaw):
+        self.axis_commands.append("yaw")
+        self.set_deg(yaw, self.target[1])
+
+    def set_pitch_deg(self, pitch):
+        self.axis_commands.append("pitch")
+        self.set_deg(self.target[0], pitch)
 
     def disable(self):
         self.events.append("disable")
@@ -151,6 +164,7 @@ class TuningTests(unittest.TestCase):
                 args = tune.parse_args(["--axis", "pitch", "--speed-kp", "10", "--speed-ki", "4",
                                         "--pos-kp", "40", "--pos-ki", "0", "--enable", "--output", tmp])
                 motor = Motor(args.config)
+                motor.position = motor.target = [0., 42.]
                 motor.failure = failure
                 with patch.object(tune, "Gimbal2Dof", return_value=motor), patch("builtins.input", return_value="ENABLE"), \
                      patch.object(tune.sys, "stdin", io.StringIO("q\n")), \
@@ -161,11 +175,15 @@ class TuningTests(unittest.TestCase):
                     else:
                         tune.run(args)
                 self.assertEqual(motor.events[-2:], ["disable", "close"])
+                targets = [e[1] for e in motor.events if isinstance(e, tuple) and isinstance(e[0], (int, float))]
+                self.assertTrue(all(value <= 40 for value in targets))
+                if failure is None:
+                    self.assertTrue(targets)
                 record = json.loads(next(Path(tmp).glob("tune_*/run.json")).read_text())
                 self.assertEqual(record["status"], "fault" if failure else "finished")
 
     def test_candidates_are_valid_unique_and_include_integral_compensation(self):
-        self.assertEqual(autotune.candidate_values(0, True), [0, 2, 4, 8])
+        self.assertEqual(autotune.candidate_values(0, True), [0, 2, 4, 8, 16, 32, 64])
         self.assertEqual(autotune.candidate_values(256), [256, 192])
 
     def test_protocol_quantization_does_not_drift(self):
@@ -200,6 +218,8 @@ class TuningTests(unittest.TestCase):
                     self.assertTrue(all(r["recovery_time_s"] is not None for r in results))
                     self.assertTrue(any(isinstance(e, tuple) and e[0] > 2.8 for e in motor.events))
                     self.assertTrue(any(isinstance(e, tuple) and e[0] < -2.8 for e in motor.events))
+                    self.assertTrue(motor.axis_commands)
+                    self.assertEqual(set(motor.axis_commands), {"yaw"})
                 record = json.loads((directory / "result.json").read_text())
                 self.assertEqual(record["status"], "fault" if failure else "passed")
                 if failure == "stalled":

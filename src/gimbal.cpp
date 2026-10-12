@@ -110,27 +110,41 @@ bool Gimbal2Dof::ping() {
 }
 
 bool Gimbal2Dof::enable() {
+    return enable_impl(nullptr);
+}
+
+bool Gimbal2Dof::enable_at(double yaw_deg, double pitch_deg) {
+    if (!std::isfinite(yaw_deg) || !std::isfinite(pitch_deg))
+        return impl_->fail("target angles must be finite");
+    if (impl_->armed) return set_deg(yaw_deg, pitch_deg);
+    State target;
+    target.yaw_deg = yaw_deg;
+    target.pitch_deg = pitch_deg;
+    return enable_impl(&target);
+}
+
+bool Gimbal2Dof::enable_impl(const State* initial_target) {
     if (impl_->armed) { impl_->error.clear(); return true; }
     auto& y = impl_->yaw;
     auto& p = impl_->pitch;
     const auto& c = impl_->cfg;
-    const bool ok = y.enable() && p.enable() &&
+    double ydeg = 0, pdeg = 0;
+    if (initial_target) {
+        ydeg = initial_target->yaw_deg;
+        pdeg = initial_target->pitch_deg;
+    } else if (!y.read_deg(&ydeg) || !p.read_deg(&pdeg)) {
+        return impl_->fail("could not read the current angle before enable");
+    }
+    const bool ok = y.enable() &&
                     y.setup_position(c.travel_rpm, c.accel, c.yaw_speed_kp, c.yaw_speed_ki,
-                                     c.yaw_pos_kp, c.yaw_pos_ki) &&
+                                     c.yaw_pos_kp, c.yaw_pos_ki, ydeg) && p.enable() &&
                     p.setup_position(c.travel_rpm, c.accel, c.pitch_speed_kp, c.pitch_speed_ki,
-                                     c.pitch_pos_kp, c.pitch_pos_ki);
+                                     c.pitch_pos_kp, c.pitch_pos_ki, pdeg);
     if (!ok) {
         y.disable();
         p.disable();
         impl_->armed = false;
         return impl_->fail("motor enable or position setup failed");
-    }
-    double ydeg = 0, pdeg = 0;
-    if (!y.read_deg(&ydeg) || !p.read_deg(&pdeg) || !y.set_deg(ydeg) || !p.set_deg(pdeg)) {
-        y.disable();
-        p.disable();
-        impl_->armed = false;
-        return impl_->fail("could not hold the current angle after enable");
     }
     impl_->armed = true;
     impl_->error.clear();

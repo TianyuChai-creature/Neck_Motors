@@ -38,7 +38,9 @@ python3 examples/ui.py
 python3 examples/ui.py /dev/ttyACM0
 ```
 
-界面启动时连接电机，但初始为失能状态。点击“使能”后会按界面平滑速度将两轴移向已有的 0°，随后可用 yaw/pitch 滑块设置目标角度（界面范围为 −180°～180°），右侧显示实测角度；“直通平滑速度”控制界面的目标推进速度，默认 60°/s。点击“失能”或关闭窗口会发送失能命令。
+界面启动时连接电机，但初始为失能状态。点击“使能”后会按界面平滑速度将两轴移向已有的 0°，随后可用 yaw/pitch 滑块设置目标角度（yaw 范围为 −180°～180°，pitch 为 −180°～40°），右侧显示实测角度；“直通平滑速度”控制界面的目标推进速度，默认 60°/s。点击“失能”或关闭窗口会发送失能命令。
+
+UI 会读取 `examples/tuned_pi.json`，仅接受 `status: "validated"` 且包含两轴全部八项 PI（整数 0～256）的配置，并作为当前 UI 实例的参数；SDK 默认 PI 不变。文件缺失时仍用原默认 PI，并在窗口显示“整定未验收”；存在但无效的配置会拒绝启动。当前真机验收尚未全部通过，因此不提供或自动生成合格配置，不把候选参数发布为默认值。
 
 “到 0°”会移动到**已有零点**；“当前设为零点”会把当前姿态写成零点并保存到电机，重启后仍生效。使能现在会自动运动；确认机械姿态和活动空间后再点击“使能”或使用这两个按钮。点击“开始 Log”会在 `logs/` 生成带时间戳的原始串口收发日志。
 
@@ -56,10 +58,12 @@ python3 examples/ui.py /dev/ttyACM0
 在仓库根目录运行 `./package_sdk.sh`，产物固定写入 `wheel/`：一个包含 Python 电机接口、`HeadTracker`、电机共享库和 C++ 开发文件的 Linux 平台轮子。若默认 Python 缺少构建工具，可设置 `F32C_PYTHON=/path/to/python3`。安装只需：
 
 ```bash
-python3 -m pip install --upgrade wheel/f32c_neck_motors-0.2.0-py3-none-linux_x86_64.whl
+python3 -m pip install --upgrade wheel/f32c_neck_motors-0.2.1-py3-none-linux_x86_64.whl
 ```
 
 Python 可直接 `import f32c`，无需单独安装 gz 包或设置库路径。C++ 工程可通过 `f32c.native_prefix()` 得到同一轮子里的 CMake 包前缀，并链接 `f32c::f32c`。完整示例见 [SDK 使用说明](docs/SDK使用说明.md)；打包时也会复制到 `wheel/SDK使用说明.md`。
+
+0.2.1 将初始保持目标提前到 PI 写入前，减少启动时追逐旧目标的运动。新增 `enable_at(yaw, pitch)` 指定立即生效的初始目标，不平滑也不自动限制机械范围。
 
 SDK 的 `enable()` 使能并保持当前位置；`set_deg()` 立即下发目标，不包含 UI 的平滑轨迹；`set_zero()` 将**当前位置**写为持久零点。连接或命令失败会抛出 `F32CError`，上下文管理器退出时关闭设备。
 
@@ -74,6 +78,8 @@ python3 tests/test_tracking.py
 python3 examples/tracking_demo.py  # 无硬件模拟，只评估生成目标
 ```
 
+本轮实测结果与未通过位置见 [2026-10-12 整定记录](docs/整定记录_2026-10-12.md)。当前整套 ±60° yaw 验收未完成，新版本不改变默认 PI。
+
 ## 固定负载调参
 
 工具直接使用当前仓库的 Python SDK 和已构建的 `build/libf32c.so`，不需要额外 Python 依赖，不修改默认 PI，不置零、不保存电机参数。运行期间两轴都会使能，退出或异常时尝试失能。当前标定：pitch 增大为低头，减小为抬头；第一人称 yaw 增大向左、减小向右。yaw 无已知机械限位，负载线缆会增加旋转阻力。pitch 低头极限约 43°，工具的测试目标上限为 40°，给极限留 3° 余量；验证位置的正负阶跃也必须满足此上限。pitch 沿有符号角度推进，避免最短路径绕过低头边界；yaw 仍按单圈最短方向处理。
@@ -85,7 +91,7 @@ python3 examples/autotune.py --device /dev/ttyACM0 --center 0 0
 python3 examples/autotune.py --device /dev/ttyACM0 --center 0 0 --enable
 ```
 
-自动流程以启动时实测姿态为中心，逐轴比较速度 KP/KI、位置 KP/KI，在中心及默认 ±15° 位置执行正负 3° 小步验证。`--axis yaw` 或 `--axis pitch` 可只整定一个轴；`--validation-offsets 0 -30 30` 可调整验证位置；`--baseline-only` 只测量给定参数。八个 `--yaw-speed-kp` / `--pitch-pos-ki` 等参数可覆盖初始值。默认验收为保持峰峰值 ≤0.6°、静差及阶跃位置误差 ≤1°、恢复至 ±1° 并连续保持 0.5 秒的时间 ≤2 秒；这些是实验指标，均可通过 `--help` 所列参数调整。任一轴跟随误差超过默认 15° 时终止实验并尝试失能，该阈值不是机械限位。
+自动流程以启动时实测姿态为中心，逐轴比较速度 KP/KI、位置 KP/KI，在中心及默认 ±15° 位置执行正负 3° 小步验证。`--axis yaw` 或 `--axis pitch` 可只整定一个轴；`--validation-offsets 0 -30 30` 可调整验证位置；`--baseline-only` 只测量给定参数；`--gains speed_kp speed_ki` 可仅搜索速度环。八个 `--yaw-speed-kp` / `--pitch-pos-ki` 等参数可覆盖初始值。默认验收为保持峰峰值 ≤0.6°、静差及阶跃位置误差 ≤1°、恢复至 ±1° 并连续保持 0.5 秒的时间 ≤2 秒；这些是实验指标，均可通过 `--help` 所列参数调整。任一轴跟随误差超过默认 15° 时终止实验并尝试失能，该阈值不是机械限位。
 
 `--center YAW PITCH` 可指定测试中心；例如 `--center 0 0` 可在已标定零位进行整定。全部计划位置在使能前检查；不允许把越界目标静默裁剪后计入验收。若任一轴连续 1.5 秒跟随误差大于 6°，实测角度变化却不超过 0.3°，工具会记录停滞故障并终止，不能通过自动重试或继续增加积分推动阻挡。阈值可通过 `--stall-error`、`--stall-seconds`、`--stall-motion` 调整。2026-10-10 的 56.8° pitch 试验已超出用户后来确认的约 43° 低头极限；该记录保留，但不作为正常工作范围内增加 PI 的依据。整定保留当前线缆负载，只测试边界内的运动。
 

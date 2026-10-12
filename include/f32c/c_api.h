@@ -35,6 +35,7 @@ const char* f32c_last_error(const f32c_gimbal* g);
 
 int f32c_ping(f32c_gimbal* g);
 int f32c_enable(f32c_gimbal* g);
+int f32c_enable_at(f32c_gimbal* g, double yaw_deg, double pitch_deg);
 int f32c_disable(f32c_gimbal* g);
 /* axis 0: yaw, 1: pitch. Requires enabled motors; volatile gains only, each <= 256. */
 int f32c_set_pi(f32c_gimbal* g, unsigned axis, unsigned speed_kp, unsigned speed_ki,

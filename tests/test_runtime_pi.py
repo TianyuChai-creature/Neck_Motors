@@ -58,6 +58,9 @@ class RuntimePiTests(unittest.TestCase):
                 for axis in (1, 2):
                     functions = [f[2] for f in frames if f[1] == axis]
                     self.assertLess(functions.index(3), functions.index(15))
+                    expected = (100, 64, 200, 32) if axis == 1 else (30, 8, 60, 0)
+                    self.assertEqual([int.from_bytes(f[3:-2], "big") for f in frames
+                                      if f[1] == axis and f[2] in (15, 16, 17, 18)], list(expected))
                 frames.clear()
             motor.set_pi("yaw", 50, 8, 63, 0)
             with condition:
@@ -66,7 +69,7 @@ class RuntimePiTests(unittest.TestCase):
             self.assertEqual([(f[1], f[2], int.from_bytes(f[3:-2], "big")) for f in observed],
                              [(1, 15, 50), (1, 16, 8), (1, 17, 63), (1, 18, 0)])
             self.assertEqual(motor.config.yaw_pos_kp, 63)
-            self.assertEqual(Config().yaw_pos_kp, 42)
+            self.assertEqual(Config().yaw_pos_kp, 200)
             for axis, gains in (("roll", (1, 0, 1, 0)), ("yaw", (257, 0, 1, 0)),
                                 ("pitch", (True, 0, 1, 0)), ("yaw", (2**32 + 50, 0, 1, 0))):
                 with self.assertRaises(ValueError):

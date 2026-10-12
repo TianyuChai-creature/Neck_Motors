@@ -23,13 +23,13 @@ class Config:
     id_pitch: int = 2
     travel_rpm: int = 80
     accel: int = 10
-    yaw_speed_kp: int = 40
-    yaw_speed_ki: int = 0
-    yaw_pos_kp: int = 42
-    yaw_pos_ki: int = 0
-    pitch_speed_kp: int = 10
-    pitch_speed_ki: int = 4
-    pitch_pos_kp: int = 40
+    yaw_speed_kp: int = 100
+    yaw_speed_ki: int = 64
+    yaw_pos_kp: int = 200
+    yaw_pos_ki: int = 32
+    pitch_speed_kp: int = 30
+    pitch_speed_ki: int = 8
+    pitch_pos_kp: int = 60
     pitch_pos_ki: int = 0
 
     def _validate(self) -> None:

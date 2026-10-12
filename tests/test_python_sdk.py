@@ -12,8 +12,11 @@ if __name__ == "__main__":
     lib.f32c_config_defaults.argtypes = [ctypes.POINTER(_CConfig)]
     native = _CConfig()
     lib.f32c_config_defaults(ctypes.byref(native))
-    assert (config.id_yaw, config.id_pitch, config.yaw_pos_kp, config.pitch_pos_kp) == (
-        native.id_yaw, native.id_pitch, native.yaw_pos_kp, native.pitch_pos_kp)
+    assert (config.id_yaw, config.id_pitch) == (native.id_yaw, native.id_pitch) == (1, 2)
+    names = ("yaw_speed_kp", "yaw_speed_ki", "yaw_pos_kp", "yaw_pos_ki",
+             "pitch_speed_kp", "pitch_speed_ki", "pitch_pos_kp", "pitch_pos_ki")
+    assert tuple(getattr(config, name) for name in names) == tuple(
+        getattr(native, name) for name in names) == (100, 64, 200, 32, 30, 8, 60, 0)
 
     try:
         f32c.Gimbal2Dof(f32c.Config(id_pitch=1)).open()

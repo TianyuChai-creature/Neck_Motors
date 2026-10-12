@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import ctypes
-import json
 import sys
 import time
 from pathlib import Path
@@ -30,7 +29,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "python"))
 from f32c import _CConfig
 
-PI_PROFILE = ROOT / "examples" / "tuned_pi.json"
 MOTOR_LIB = ROOT / "build" / "libf32c.so"
 ZED_LIB_CANDIDATES = (ROOT / "build-zed" / "libf32c_zed.so", ROOT / "build" / "libf32c_zed.so")
 
@@ -102,21 +100,6 @@ def open_motor(lib, device):
     config = _CConfig()
     lib.f32c_config_defaults(ctypes.byref(config))
     config.device = device
-    if not PI_PROFILE.exists():
-        print("整定尚未通过验收，UI 使用原 SDK 默认 PI", file=sys.stderr)
-        return lib.f32c_open_config(ctypes.byref(config))
-    profile = json.loads(PI_PROFILE.read_text())
-    if not isinstance(profile, dict) or not isinstance(profile.get("pi"), dict):
-        raise ValueError("UI PI profile must contain a pi object")
-    gains = profile["pi"]
-    expected = {f"{axis}_{gain}" for axis in ("yaw", "pitch")
-                for gain in ("speed_kp", "speed_ki", "pos_kp", "pos_ki")}
-    if profile.get("status") != "validated" or set(gains) != expected:
-        raise ValueError("UI requires a validated profile containing both axes' four PI gains")
-    if any(type(value) is not int or not 0 <= value <= 256 for value in gains.values()):
-        raise ValueError("UI PI gains must be integers between 0 and 256")
-    for name, value in gains.items():
-        setattr(config, name, value)
     return lib.f32c_open_config(ctypes.byref(config))
 
 
@@ -200,7 +183,7 @@ class CameraSettingRow(QWidget):
 
 
 class Panel(QWidget):
-    def __init__(self, motor_lib, motor_handle, pi_label="SDK 默认 PI（整定未验收）"):
+    def __init__(self, motor_lib, motor_handle):
         super().__init__()
         self.lib = motor_lib
         self.handle = motor_handle
@@ -222,7 +205,7 @@ class Panel(QWidget):
 
         motor_box = QGroupBox("两轴电机")
         motor_layout = QVBoxLayout(motor_box)
-        motor_layout.addWidget(QLabel(pi_label))
+        motor_layout.addWidget(QLabel("使用本负载选定参数（yaw 全范围尚未验收）"))
         btn_row = QHBoxLayout()
         self.btn_en = QPushButton("使能")
         self.btn_dis = QPushButton("失能")
@@ -250,7 +233,7 @@ class Panel(QWidget):
         smooth_row.addWidget(QLabel("直通平滑速度"))
         self.smooth_speed = QSpinBox()
         self.smooth_speed.setRange(5, 360)
-        self.smooth_speed.setValue(60)
+        self.smooth_speed.setValue(5)
         self.smooth_speed.setSuffix(" °/s")
         smooth_row.addWidget(self.smooth_speed)
         smooth_row.addStretch(1)
@@ -549,14 +532,11 @@ class Panel(QWidget):
 def main() -> None:
     lib = load_motor_lib()
     device = sys.argv[1].encode() if len(sys.argv) > 1 else None
-    try:
-        handle = open_motor(lib, device)
-    except (OSError, ValueError, KeyError) as exc:
-        sys.exit(f"无法加载整定参数: {exc}")
+    handle = open_motor(lib, device)
     if not handle:
         sys.exit("open/ping failed — check power, IDs 1/2, and the serial device")
     app = QApplication(sys.argv)
-    window = Panel(lib, handle, "已加载验收通过的 PI" if PI_PROFILE.exists() else "SDK 默认 PI（整定未验收）")
+    window = Panel(lib, handle)
     window.resize(1100, 680)
     window.show()
     sys.exit(app.exec())

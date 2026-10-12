@@ -1,9 +1,7 @@
 """Hardware-free check of the UI's enable and camera-connect defaults."""
 
 import os
-import json
 import sys
-import tempfile
 import time
 from pathlib import Path
 from unittest.mock import patch
@@ -79,44 +77,22 @@ class Camera:
 
 if __name__ == "__main__":
     app = QApplication([])
-    gains = dict(yaw_speed_kp=75, yaw_speed_ki=32, yaw_pos_kp=120, yaw_pos_ki=0,
-                 pitch_speed_kp=15, pitch_speed_ki=8, pitch_pos_kp=60, pitch_pos_ki=0)
+    gains = dict(yaw_speed_kp=100, yaw_speed_ki=64, yaw_pos_kp=200, yaw_pos_ki=32,
+                 pitch_speed_kp=30, pitch_speed_ki=8, pitch_pos_kp=60, pitch_pos_ki=0)
     native = ui.load_motor_lib()
     observed = {}
     def capture_config(pointer):
+        assert pointer._obj.device == b"/dev/f32c-ui-test"
+        assert (pointer._obj.travel_rpm, pointer._obj.accel) == (80, 10)
         observed.update({name: getattr(pointer._obj, name) for name in gains})
         return 1
-    with tempfile.TemporaryDirectory() as directory:
-        profile = Path(directory) / "profile.json"
-        profile.write_text(json.dumps({"status": "validated", "pi": gains}))
-        with patch.object(ui, "PI_PROFILE", profile), patch.object(native, "f32c_open_config", side_effect=capture_config) as opener:
-            assert ui.open_motor(native, None) == 1
-            assert observed == gains
-            profile.write_text(json.dumps({"status": "validation_failed", "pi": gains}))
-            try:
-                ui.open_motor(native, None)
-            except ValueError:
-                pass
-            else:
-                raise AssertionError("unvalidated UI profile accepted")
-            assert opener.call_count == 1
-            for invalid in ([], {"status": "validated", "pi": []},
-                            {"status": "validated", "pi": dict(gains, yaw_speed_kp=True)}):
-                profile.write_text(json.dumps(invalid))
-                try:
-                    ui.open_motor(native, None)
-                except ValueError:
-                    pass
-                else:
-                    raise AssertionError("invalid PI profile accepted")
-            assert opener.call_count == 1
-            profile.unlink()
-            assert ui.open_motor(native, None) == 1
-            assert observed == dict(yaw_speed_kp=40, yaw_speed_ki=0, yaw_pos_kp=42, yaw_pos_ki=0,
-                                    pitch_speed_kp=10, pitch_speed_ki=4, pitch_pos_kp=40, pitch_pos_ki=0)
+    with patch.object(native, "f32c_open_config", side_effect=capture_config):
+        assert ui.open_motor(native, b"/dev/f32c-ui-test") == 1
+        assert observed == gains
     motor = Motor()
     panel = ui.Panel(motor, 1)
     assert panel.pitch.slider.maximum() == 400
+    assert panel.smooth_speed.value() == 5
     assert ui.advance_angle(30, -170, 1, circular=False) == 29
     panel.enable()
     assert panel.desired_angles == {"yaw": 0.0, "pitch": 0.0}

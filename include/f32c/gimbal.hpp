@@ -15,14 +15,14 @@ public:
         uint8_t id_pitch = 2;
         int travel_rpm = 80;
         uint16_t accel = 10;
-        // Tuned in T-profile mode; revalidate these gains with direct-mode host smoothing.
-        uint16_t yaw_speed_kp = 40;
-        uint16_t yaw_speed_ki = 0;
-        uint16_t yaw_pos_kp = 42;
-        uint16_t yaw_pos_ki = 0;
-        uint16_t pitch_speed_kp = 10;
-        uint16_t pitch_speed_ki = 4;
-        uint16_t pitch_pos_kp = 40;
+        // Selected for the current load; yaw +/-60 degree validation remains incomplete.
+        uint16_t yaw_speed_kp = 100;
+        uint16_t yaw_speed_ki = 64;
+        uint16_t yaw_pos_kp = 200;
+        uint16_t yaw_pos_ki = 32;
+        uint16_t pitch_speed_kp = 30;
+        uint16_t pitch_speed_ki = 8;
+        uint16_t pitch_pos_kp = 60;
         uint16_t pitch_pos_ki = 0;
         Config() = default;
     };

@@ -1,11 +1,11 @@
-# F32C Neck Motors SDK 0.2.1 使用说明
+# F32C Neck Motors SDK 0.2.2 使用说明
 
 ## 1. 发布内容与安装
 
-发布文件为 `wheel/f32c_neck_motors-0.2.1-py3-none-linux_x86_64.whl`，本说明同时复制至 `wheel/SDK使用说明.md`。轮子包含 Python 包 `f32c`（含 `HeadTracker`）、电机共享库 `libf32c.so`、电机 C/C++ 公开头文件、CMake 包配置和本说明。本 SDK 负责电机通信、参数设置和跟随目标生成。Python >=3.10；平台为 Linux x86_64，原生库需要兼容的 glibc/libstdc++。
+发布文件为 `wheel/f32c_neck_motors-0.2.2-py3-none-linux_x86_64.whl`，本说明同时复制至 `wheel/SDK使用说明.md`。轮子包含 Python 包 `f32c`（含 `HeadTracker`）、电机共享库 `libf32c.so`、电机 C/C++ 公开头文件、CMake 包配置和本说明。本 SDK 负责电机通信、参数设置和跟随目标生成。Python >=3.10；平台为 Linux x86_64，原生库需要兼容的 glibc/libstdc++。
 
 ```bash
-python3 -m pip install --upgrade wheel/f32c_neck_motors-0.2.1-py3-none-linux_x86_64.whl
+python3 -m pip install --upgrade wheel/f32c_neck_motors-0.2.2-py3-none-linux_x86_64.whl
 python3 -c 'import f32c; from importlib.metadata import version; print(version("f32c-neck-motors")); print(f32c.native_prefix())'
 python3 -c 'from f32c import HeadTracker, TrackingConfig, TrackingError; print("HeadTracker API available")'
 ```
@@ -14,7 +14,7 @@ python3 -c 'from f32c import HeadTracker, TrackingConfig, TrackingError; print("
 
 0.2.0 将发布内容收敛为电机 SDK，保留 `HeadTracker`、`TrackingConfig`、`TrackingError` 和运行时 `set_pi()`，沿用原有电机配置结构和默认 PI。图像采集相关的 Python 接口和原生组件不再提供，输入数据由上层应用管理。调参工具与示例位于源码仓库 `examples/`，不随 whl 安装。
 
-本次 0.2.1 的电机原生库使用当前源码重新编译，CMake 包仅导出 `f32c::f32c`。电机 C/C++ ABI 不变；Python 电机 API 与跟随控制层通过无硬件测试，机械效果仍需真机验收。
+本次 0.2.2 的电机原生库使用当前源码重新编译，CMake 包仅导出 `f32c::f32c`。电机 C/C++ ABI 不变；Python 电机 API 与跟随控制层通过无硬件测试，机械效果仍需真机验收。
 
 ## 2. 现场方向、边界与控制语义
 
@@ -55,12 +55,12 @@ with Gimbal2Dof(Config(device="/dev/ttyACM0")) as motor:
 | `id_yaw`, `id_pitch` | `1`, `2` | 地址 1～255，必须不同 |
 | `travel_rpm` | `80` | 目标速度参数，0～1000 RPM；不等同于主机轨迹速度 |
 | `accel` | `10` | 加速度参数，0～65535，协议单位转/s² |
-| `yaw_speed_kp`, `yaw_speed_ki` | `40`, `0` | yaw 速度环 PI，整数 0～256 |
-| `yaw_pos_kp`, `yaw_pos_ki` | `42`, `0` | yaw 位置环 PI，整数 0～256 |
-| `pitch_speed_kp`, `pitch_speed_ki` | `10`, `4` | pitch 速度环 PI，整数 0～256 |
-| `pitch_pos_kp`, `pitch_pos_ki` | `40`, `0` | pitch 位置环 PI，整数 0～256 |
+| `yaw_speed_kp`, `yaw_speed_ki` | `100`, `64` | yaw 速度环 PI，整数 0～256 |
+| `yaw_pos_kp`, `yaw_pos_ki` | `200`, `32` | yaw 位置环 PI，整数 0～256 |
+| `pitch_speed_kp`, `pitch_speed_ki` | `30`, `8` | pitch 速度环 PI，整数 0～256 |
+| `pitch_pos_kp`, `pitch_pos_ki` | `60`, `0` | pitch 位置环 PI，整数 0～256 |
 
-本版本未改变这些默认 PI；它们不代表当前固定负载已完成验收。`set_pi()` 成功后更新当前实例的 `config`，不会修改 `Config()` 的默认值。
+0.2.2 按用户选择，将这组固定负载参数作为 Python `Config()`、C++ `Gimbal2Dof::Config`、C `f32c_config_defaults()` 和本仓库 UI 的统一默认 PI。pitch 30/8、60/0 在 −33°～39°、5°/s 的一轮测试中通过；yaw 100/64、200/32 尚未通过 −60°～60° 全范围验收。默认采用代表用户选定当前使用，不代表整套整定合格。`set_pi()` 成功后更新当前实例的 `config`，不会修改 `Config()` 的默认值。
 
 ### 参数设置方式
 
@@ -79,8 +79,8 @@ motor_config = Config(
     device="/dev/ttyACM0",
     travel_rpm=80,
     accel=10,
-    yaw_speed_kp=40, yaw_speed_ki=0, yaw_pos_kp=42, yaw_pos_ki=0,
-    pitch_speed_kp=10, pitch_speed_ki=4, pitch_pos_kp=40, pitch_pos_ki=0,
+    yaw_speed_kp=100, yaw_speed_ki=64, yaw_pos_kp=200, yaw_pos_ki=32,
+    pitch_speed_kp=30, pitch_speed_ki=8, pitch_pos_kp=60, pitch_pos_ki=0,
 )
 motor = Gimbal2Dof(motor_config)  # 此处不打开串口、不使能。
 ```
@@ -356,7 +356,7 @@ python3 examples/autotune.py --device /dev/ttyACM0 --center 0 0 --enable
 
 人工受扰记录可用 `examples/tune.py` 的 `hold/push/release/report` 命令，详见仓库 readme。自动试验使用目标阶跃，不等同于真实外力冲击；无力传感器时不能给出 Nm/rad 的绝对刚度。线缆阻力可作为现有负载参与整定，实体极限不能用更高 PI 强推。
 
-目前真机整定尚未完成完整工作范围验收；本次发布提供整定能力，不将未验收候选替换默认值。
+目前真机整定尚未完成 yaw 全范围验收。0.2.2 按用户明确选择采用上表 PI 为当前默认参数；UI 直接使用原生 SDK 默认值，不需要 `tuned_pi.json`，默认以 5°/s 平滑推进，pitch 指令上限 40°。`set_deg()` 仍立即下发目标，SDK 不自动将其它调用方的运动限制到 5°/s 或 pitch 40°。参数在使能时写入电机临时寄存器，不自动持久保存，也不更改零点。
 
 ```bash
 F32C_PYTHON=/usr/bin/python3 ./package_sdk.sh

@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "python"))
-from f32c import _CConfig
+from f32c import HeadTracker, State, TrackingConfig, TrackingError, _CConfig
 
 MOTOR_LIB = ROOT / "build" / "libf32c.so"
 ZED_LIB_CANDIDATES = (ROOT / "build-zed" / "libf32c_zed.so", ROOT / "build" / "libf32c_zed.so")
@@ -50,12 +50,6 @@ def wrap180(deg: float) -> float:
     if x <= -180.0:
         x += 360.0
     return x
-
-
-def advance_angle(current: float, target: float, max_step: float, circular: bool = True) -> float:
-    error = wrap180(target - current) if circular else target - current
-    step = max(-max_step, min(max_step, error))
-    return wrap180(current + step) if circular else current + step
 
 
 class ZedImageView(ctypes.Structure):
@@ -198,6 +192,9 @@ class Panel(QWidget):
         self.log_path = None
         self.hold_samples = deque()
         self.hold_target = None
+        self.hold_target_since = 0.
+        self.motion_samples = {axis: deque() for axis in ("yaw", "pitch")}
+        self.tracker = None
         self.setWindowTitle("F32C 2-DoF + ZED Mini")
 
         self.status = QLabel("失能")
@@ -234,15 +231,15 @@ class Panel(QWidget):
         motor_layout.addWidget(self.yaw)
         motor_layout.addWidget(self.pitch)
         smooth_row = QHBoxLayout()
-        smooth_row.addWidget(QLabel("直通平滑速度"))
+        smooth_row.addWidget(QLabel("最高运动速度"))
         self.smooth_speed = QSpinBox()
         self.smooth_speed.setRange(5, 360)
-        self.smooth_speed.setValue(5)
+        self.smooth_speed.setValue(120)
         self.smooth_speed.setSuffix(" °/s")
         smooth_row.addWidget(self.smooth_speed)
         smooth_row.addStretch(1)
         motor_layout.addLayout(smooth_row)
-        motor_layout.addWidget(QLabel("latest-wins：滑块更新目标，50 Hz 平滑下发，不建立队列"))
+        motor_layout.addWidget(QLabel("目标即时更新，接近目标时平滑减速"))
 
         camera_box = QGroupBox("ZED Mini 相机（可选）")
         camera_layout = QVBoxLayout(camera_box)
@@ -321,18 +318,31 @@ class Panel(QWidget):
         self._last_command_tick = now
         if not self.armed:
             return
-        max_step = self.smooth_speed.value() * dt
+        try:
+            if self.tracker is None or self.tracker.config.max_speed_deg_s != self.smooth_speed.value():
+                self.tracker = HeadTracker(
+                    State(self.commanded_angles["yaw"], self.commanded_angles["pitch"]),
+                    TrackingConfig(pitch_limits=(-180, 40), max_speed_deg_s=self.smooth_speed.value(),
+                                   max_accel_deg_s2=600, deadband_deg=0, hysteresis_deg=0),
+                    timestamp=now - dt)
+            self.tracker.set_target(self.desired_angles["yaw"], self.desired_angles["pitch"], timestamp=now)
+            next_command = self.tracker.step(timestamp=now)
+        except (ValueError, TrackingError) as exc:
+            self.fault(f"目标轨迹生成失败: {exc}")
+            return
         for axis, setter in (
             ("yaw", self.lib.f32c_set_yaw_deg),
             ("pitch", self.lib.f32c_set_pitch_deg),
         ):
             current = self.commanded_angles[axis]
-            command = round(advance_angle(current, self.desired_angles[axis], max_step, circular=axis == "yaw") * 10) / 10
+            command = next_command.yaw_deg if axis == "yaw" else next_command.pitch_deg
             if round(command * 10) == round(current * 10):
                 continue
             if not setter(self.handle, command):
                 self.fault(f"{axis} 目标发送失败")
                 return
+            distance = wrap180(command - current) if axis == "yaw" else command - current
+            self.motion_samples[axis].append((now, abs(distance) / max(dt, 1e-6)))
             self.commanded_angles[axis] = command
 
     def enable(self) -> None:
@@ -363,8 +373,11 @@ class Panel(QWidget):
             QMessageBox.critical(self, "F32C", "读取当前角度失败，取消回零；" + ("已失能" if disabled else "失能失败，请检查电机"))
             return
         self.commanded_angles = initial
+        self.tracker = None
         self.hold_samples.clear()
         self.hold_target = None
+        for samples in self.motion_samples.values():
+            samples.clear()
         self.armed = True
         self.status.setText("使能")
         self._last_command_tick = time.monotonic()
@@ -375,8 +388,11 @@ class Panel(QWidget):
     def disable(self) -> None:
         disabled = self.lib.f32c_disable(self.handle)
         self.armed = False
+        self.tracker = None
         self.hold_samples.clear()
         self.hold_target = None
+        for samples in self.motion_samples.values():
+            samples.clear()
         self.status.setText("已发送失能" if disabled else "失能发送失败，请断电")
 
     def fault(self, reason: str) -> None:
@@ -385,22 +401,31 @@ class Panel(QWidget):
 
     def check_feedback(self, yaw: float, pitch: float) -> bool:
         measured = {"yaw": wrap180(yaw), "pitch": wrap180(pitch)}
+        now = time.monotonic()
+        allowance = {}
+        for axis, samples in self.motion_samples.items():
+            while samples and samples[0][0] < now - .5:
+                samples.popleft()
+            # Permit measured motion lag while retaining a bounded fault limit.
+            allowance[axis] = 3 + min(9, .12 * max((speed for _, speed in samples), default=0))
         if (not all(math.isfinite(value) for value in measured.values())
                 or measured["pitch"] > 43 + 1e-9
-                or abs(wrap180(measured["yaw"] - self.commanded_angles["yaw"])) > 3 + 1e-9
-                or abs(measured["pitch"] - self.commanded_angles["pitch"]) > 3 + 1e-9):
-            self.fault("反馈越界或跟随误差超过 3°")
+                or abs(wrap180(measured["yaw"] - self.commanded_angles["yaw"])) > allowance["yaw"] + 1e-9
+                or abs(measured["pitch"] - self.commanded_angles["pitch"]) > allowance["pitch"] + 1e-9):
+            self.fault("反馈越界或跟随误差超过保护范围")
             return False
         target = tuple(self.commanded_angles[axis] for axis in ("yaw", "pitch"))
         if target != self.hold_target:
             self.hold_samples.clear()
             self.hold_target = target
-        if any(abs(self.commanded_angles[axis] - self.desired_angles[axis]) > .1
-               for axis in ("yaw", "pitch")):
+            self.hold_target_since = now
+        if (any(abs(self.commanded_angles[axis] - self.desired_angles[axis]) > .1
+                for axis in ("yaw", "pitch")) or any(self.motion_samples.values())):
             self.hold_samples.clear()
             return True
-        now = time.monotonic()
         errors = tuple(wrap180(measured[axis] - self.commanded_angles[axis]) for axis in ("yaw", "pitch"))
+        if not self.hold_samples and max(map(abs, errors)) > .5 and now - self.hold_target_since < 1:
+            return True
         self.hold_samples.append((now, errors))
         while self.hold_samples and self.hold_samples[0][0] < now - 1:
             self.hold_samples.popleft()

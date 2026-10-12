@@ -24,7 +24,7 @@ class Config:
     travel_rpm: int = 80
     accel: int = 10
     yaw_speed_kp: int = 50
-    yaw_speed_ki: int = 8
+    yaw_speed_ki: int = 16
     yaw_pos_kp: int = 63
     yaw_pos_ki: int = 0
     pitch_speed_kp: int = 30

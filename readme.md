@@ -38,11 +38,11 @@ python3 examples/ui.py
 python3 examples/ui.py /dev/ttyACM0
 ```
 
-界面启动时连接电机，但初始为失能状态。点击“使能”后会按界面平滑速度将两轴移向已有的 0°，随后可用 yaw/pitch 滑块设置目标角度（yaw 范围为 −180°～180°，pitch 为 −180°～40°），右侧显示实测角度；“直通平滑速度”控制界面的目标推进速度，默认 5°/s。点击“失能”或关闭窗口会发送失能命令。
+界面启动时连接电机，但初始为失能状态。点击“使能”后会按界面平滑速度将两轴移向已有的 0°，随后可用 yaw/pitch 滑块设置目标角度（yaw 范围为 −180°～180°，pitch 为 −180°～40°），右侧显示实测角度；“最高运动速度”控制界面的轨迹速度上限，默认最高 120°/s，并限制加速度为 600°/s²。点击“失能”或关闭窗口会发送失能命令。
 
-0.2.2 的高增益组合在用户 UI 使能时出现剧烈振荡，已撤回。0.2.3 默认采用 **yaw 速度 PI=50/8、位置 PI=63/0；pitch 速度 PI=30/8、位置 PI=60/0**，Python、C/C++ 和 UI 一致。真实 Qt UI 的三轮使能、5°/s 回零和保持测试通过，最长保持 30 秒，末段 yaw 摆幅最大约 0.1°、pitch 未记录到摆幅。相机并行取流、重新上电和 yaw ±60° 全范围尚未验证；使能时临时下发，不保存电机参数或零点。
+0.2.2 的高增益组合已撤回。0.2.4 使用 **yaw 速度 PI=50/16、位置 PI=63/0；pitch 速度 PI=30/8、位置 PI=60/0**，Python、C/C++ 和 UI 一致。UI 使用 SDK `HeadTracker` 提前减速，以提高速度且减少到位摆动；小角度行程不一定达到最高速度。两轮真实 UI 的回零、±15° 双向切换通过，末段摆幅最大约 0.4°、均值误差最大约 0.15°。相机并行、重新上电和 yaw ±60° 全范围尚未验证。
 
-“到 0°”会移动到**已有零点**；“当前设为零点”会把当前姿态写成零点并保存到电机，重启后仍生效。使能现在会自动运动；确认机械姿态和活动空间后再点击“使能”或使用这两个按钮。使能前会自动开启 Log，在 `logs/` 保存带时间戳的原始串口收发日志，也可手动使用 Log 开关。读反馈或发目标失败、跟随误差超过 3°，以及固定目标 1 秒窗口内摆幅超过 1°时，UI 会请求失能并停止目标下发。
+“到 0°”会移动到**已有零点**；“当前设为零点”会把当前姿态写成零点并保存到电机，重启后仍生效。使能现在会自动运动；确认机械姿态和活动空间后再点击“使能”或使用这两个按钮。使能前会自动开启 Log，在 `logs/` 保存带时间戳的原始串口收发日志，也可手动使用 Log 开关。读反馈或发目标失败、超出速度相关的有界跟随误差，以及到位后固定目标窗口内摆幅超过 1°时，会请求失能；运动结束后恢复 3° 跟随误差上限。
 
 ## 命令行示例与 C++ 接口
 
@@ -51,14 +51,14 @@ python3 examples/ui.py /dev/ttyACM0
 ./build/f32c_zero  # 回车后使能、把当前姿态设为零点并持久保存
 ```
 
-`f32c_zero` 会修改持久化零点，请在确认当前姿态后运行。C++ 公共接口见 [`include/f32c/gimbal.hpp`](include/f32c/gimbal.hpp)，C 接口见 [`include/f32c/c_api.h`](include/f32c/c_api.h)。典型调用顺序为 `open → ping → enable → set_deg/read → disable`。C++ 中可通过 `Gimbal2Dof::Config` 指定串口路径、ID、速度、加速度和 PI 参数；`set_deg()` 立即依次下发两轴目标，界面的 50 Hz 平滑逻辑不在 SDK 内。
+`f32c_zero` 会修改持久化零点，请在确认当前姿态后运行。C++ 公共接口见 [`include/f32c/gimbal.hpp`](include/f32c/gimbal.hpp)，C 接口见 [`include/f32c/c_api.h`](include/f32c/c_api.h)。典型调用顺序为 `open → ping → enable → set_deg/read → disable`。C++ 中可通过 `Gimbal2Dof::Config` 指定串口路径、ID、速度、加速度和 PI 参数；`set_deg()` 立即依次下发两轴目标，UI 以 50 Hz 计划周期调用 SDK 的 `HeadTracker` 生成目标，原生 setter 本身不做轨迹平滑。
 
 ## 安装 SDK（C++ / Python）
 
 在仓库根目录运行 `./package_sdk.sh`，产物固定写入 `wheel/`：一个包含 Python 电机接口、`HeadTracker`、电机共享库和 C++ 开发文件的 Linux 平台轮子。若默认 Python 缺少构建工具，可设置 `F32C_PYTHON=/path/to/python3`。安装只需：
 
 ```bash
-python3 -m pip install --upgrade wheel/f32c_neck_motors-0.2.3-py3-none-linux_x86_64.whl
+python3 -m pip install --upgrade wheel/f32c_neck_motors-0.2.4-py3-none-linux_x86_64.whl
 ```
 
 Python 可直接 `import f32c`，无需单独安装 gz 包或设置库路径。C++ 工程可通过 `f32c.native_prefix()` 得到同一轮子里的 CMake 包前缀，并链接 `f32c::f32c`。完整示例见 [SDK 使用说明](docs/SDK使用说明.md)；打包时也会复制到 `wheel/SDK使用说明.md`。
@@ -78,7 +78,7 @@ python3 tests/test_tracking.py
 python3 examples/tracking_demo.py  # 无硬件模拟，只评估生成目标
 ```
 
-本轮实测结果与未通过位置见 [2026-10-12 整定记录](docs/整定记录_2026-10-12.md)。当前整套 ±60° yaw 验收未完成；0.2.3 纠正 0.2.2 的 UI 启动问题，使用新的回零保持默认参数，保留历次失败记录。
+本轮实测结果与未通过位置见 [2026-10-12 整定记录](docs/整定记录_2026-10-12.md)。当前整套 ±60° yaw 验收未完成；0.2.4 提高响应速度并使用加减速轨迹，沿用已纠正的使能顺序，保留历次失败记录。
 
 ## 固定负载调参
 

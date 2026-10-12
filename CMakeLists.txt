@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(f32c_sdk VERSION 0.2.3 LANGUAGES CXX)
+project(f32c_sdk VERSION 0.2.4 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)

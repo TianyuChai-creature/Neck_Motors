@@ -85,7 +85,7 @@ class Camera:
 
 if __name__ == "__main__":
     app = QApplication([])
-    gains = dict(yaw_speed_kp=50, yaw_speed_ki=8, yaw_pos_kp=63, yaw_pos_ki=0,
+    gains = dict(yaw_speed_kp=50, yaw_speed_ki=16, yaw_pos_kp=63, yaw_pos_ki=0,
                  pitch_speed_kp=30, pitch_speed_ki=8, pitch_pos_kp=60, pitch_pos_ki=0)
     native = ui.load_motor_lib()
     observed = {}
@@ -100,8 +100,7 @@ if __name__ == "__main__":
     motor = Motor()
     panel = ui.Panel(motor, 1)
     assert panel.pitch.slider.maximum() == 400
-    assert panel.smooth_speed.value() == 5
-    assert ui.advance_angle(30, -170, 1, circular=False) == 29
+    assert panel.smooth_speed.value() == 120
     panel.enable()
     assert panel.logging
     assert panel.desired_angles == {"yaw": 0.0, "pitch": 0.0}
@@ -109,6 +108,7 @@ if __name__ == "__main__":
     assert not motor.sent  # Enable queues a smooth return, not an immediate 0° jump.
     panel._last_command_tick = time.monotonic() - 0.02
     panel.step_targets()
+    assert panel.tracker.config.max_accel_deg_s2 == 600
     assert 0 < motor.sent[0][1] < 30
     assert -20 < motor.sent[1][1] < 0
 
@@ -121,19 +121,28 @@ if __name__ == "__main__":
     panel.commanded_angles = panel.desired_angles = {"yaw": 0., "pitch": 0.}
     panel.hold_samples.clear()
     panel.hold_target = None
+    for samples in panel.motion_samples.values():
+        samples.clear()
+    panel.motion_samples["yaw"].append((10., 30.))
+    with patch.object(ui.time, "monotonic", return_value=10.1):
+        assert panel.check_feedback(5, 0)  # Normal lag during a faster trajectory.
+    with patch.object(ui.time, "monotonic", return_value=10.7):
+        assert not panel.check_feedback(5, 0)  # The same error is a fault after stopping.
+    assert not panel.armed and motor.disabled == 1
+    panel.armed = True
     assert panel.check_feedback(0, 0)
     assert panel.check_feedback(-.7, 0)
     assert not panel.check_feedback(.7, 0)
-    assert not panel.armed and motor.disabled == 1
+    assert not panel.armed and motor.disabled == 2
 
     panel.armed = True
     motor.position = [5., 0.]
     panel.poll_motors()
-    assert not panel.armed and motor.disabled == 2
+    assert not panel.armed and motor.disabled == 3
 
     motor.read_ok = False
     with patch.object(ui.QMessageBox, "critical", return_value=0):
         panel.enable()
-    assert motor.disabled == 3 and not panel.armed
+    assert motor.disabled == 4 and not panel.armed
     panel.close()
     print("UI defaults passed")

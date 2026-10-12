@@ -1,11 +1,11 @@
-# F32C Neck Motors SDK 0.2.3 使用说明
+# F32C Neck Motors SDK 0.2.4 使用说明
 
 ## 1. 发布内容与安装
 
-发布文件为 `wheel/f32c_neck_motors-0.2.3-py3-none-linux_x86_64.whl`，本说明同时复制至 `wheel/SDK使用说明.md`。轮子包含 Python 包 `f32c`（含 `HeadTracker`）、电机共享库 `libf32c.so`、电机 C/C++ 公开头文件、CMake 包配置和本说明。本 SDK 负责电机通信、参数设置和跟随目标生成。Python >=3.10；平台为 Linux x86_64，原生库需要兼容的 glibc/libstdc++。
+发布文件为 `wheel/f32c_neck_motors-0.2.4-py3-none-linux_x86_64.whl`，本说明同时复制至 `wheel/SDK使用说明.md`。轮子包含 Python 包 `f32c`（含 `HeadTracker`）、电机共享库 `libf32c.so`、电机 C/C++ 公开头文件、CMake 包配置和本说明。本 SDK 负责电机通信、参数设置和跟随目标生成。Python >=3.10；平台为 Linux x86_64，原生库需要兼容的 glibc/libstdc++。
 
 ```bash
-python3 -m pip install --upgrade wheel/f32c_neck_motors-0.2.3-py3-none-linux_x86_64.whl
+python3 -m pip install --upgrade wheel/f32c_neck_motors-0.2.4-py3-none-linux_x86_64.whl
 python3 -c 'import f32c; from importlib.metadata import version; print(version("f32c-neck-motors")); print(f32c.native_prefix())'
 python3 -c 'from f32c import HeadTracker, TrackingConfig, TrackingError; print("HeadTracker API available")'
 ```
@@ -14,7 +14,7 @@ python3 -c 'from f32c import HeadTracker, TrackingConfig, TrackingError; print("
 
 0.2.0 将发布内容收敛为电机 SDK，保留 `HeadTracker`、`TrackingConfig`、`TrackingError` 和运行时 `set_pi()`，沿用原有电机配置结构和默认 PI。图像采集相关的 Python 接口和原生组件不再提供，输入数据由上层应用管理。调参工具与示例位于源码仓库 `examples/`，不随 whl 安装。
 
-本次 0.2.3 的电机原生库使用当前源码重新编译，CMake 包仅导出 `f32c::f32c`。电机 C/C++ ABI 不变；Python 电机 API 与跟随控制层通过无硬件测试，机械效果仍需真机验收。
+本次 0.2.4 的电机原生库使用当前源码重新编译，CMake 包仅导出 `f32c::f32c`。电机 C/C++ ABI 不变；Python 电机 API 与跟随控制层通过无硬件测试，机械效果仍需真机验收。
 
 ## 2. 现场方向、边界与控制语义
 
@@ -55,12 +55,12 @@ with Gimbal2Dof(Config(device="/dev/ttyACM0")) as motor:
 | `id_yaw`, `id_pitch` | `1`, `2` | 地址 1～255，必须不同 |
 | `travel_rpm` | `80` | 目标速度参数，0～1000 RPM；不等同于主机轨迹速度 |
 | `accel` | `10` | 加速度参数，0～65535，协议单位转/s² |
-| `yaw_speed_kp`, `yaw_speed_ki` | `50`, `8` | yaw 速度环 PI，整数 0～256 |
+| `yaw_speed_kp`, `yaw_speed_ki` | `50`, `16` | yaw 速度环 PI，整数 0～256 |
 | `yaw_pos_kp`, `yaw_pos_ki` | `63`, `0` | yaw 位置环 PI，整数 0～256 |
 | `pitch_speed_kp`, `pitch_speed_ki` | `30`, `8` | pitch 速度环 PI，整数 0～256 |
 | `pitch_pos_kp`, `pitch_pos_ki` | `60`, `0` | pitch 位置环 PI，整数 0～256 |
 
-0.2.2 的 yaw 100/64、200/32 在用户实际 UI 使能时出现两轴剧烈振荡，已撤回为默认值。0.2.3 使用 yaw 50/8、63/0 和 pitch 30/8、60/0，统一用于 Python `Config()`、C++ 配置、C `f32c_config_defaults()` 和 UI。它通过三轮实际 Qt UI 的使能→5°/s 平滑回零→0°保持测试，末段记录的 yaw 摆幅最大约 0.1°、pitch 未记录到摆幅；最长保持 30 秒。相机并行取流、重新上电以及 yaw −60°～60° 全范围尚未通过新版本验证。`set_pi()` 成功后更新当前实例的 `config`，不会修改 `Config()` 默认值。
+0.2.2 的高增益组合在实际 UI 使能时振荡，已撤回。0.2.4 在稳定版本基础上仅将 yaw 速度 KI 从 8 调整到 16，其余为 yaw 速度 KP=50、位置 PI=63/0，pitch 速度 PI=30/8、位置 PI=60/0。UI 采用最高 120°/s、最大加速度 600°/s² 的 `HeadTracker` 轨迹；相较 0.2.3 的 5°/s 明显提高运动响应，并在接近目标时减速。此组合通过两轮实际 UI 回零及 yaw/pitch ±15° 双向切换，末段保持峰峰值最大约 0.4°，最大均值误差约 0.15°。SDK `set_deg()` 仍立即发目标，只有上层采用轨迹生成器时才有限速和加减速。yaw ±60° 全范围、相机并行和重新上电尚未验证。`set_pi()` 更新当前实例，不修改全局默认值。
 
 ### 参数设置方式
 
@@ -79,7 +79,7 @@ motor_config = Config(
     device="/dev/ttyACM0",
     travel_rpm=80,
     accel=10,
-    yaw_speed_kp=50, yaw_speed_ki=8, yaw_pos_kp=63, yaw_pos_ki=0,
+    yaw_speed_kp=50, yaw_speed_ki=16, yaw_pos_kp=63, yaw_pos_ki=0,
     pitch_speed_kp=30, pitch_speed_ki=8, pitch_pos_kp=60, pitch_pos_ki=0,
 )
 motor = Gimbal2Dof(motor_config)  # 此处不打开串口、不使能。
@@ -356,7 +356,7 @@ python3 examples/autotune.py --device /dev/ttyACM0 --center 0 0 --enable
 
 人工受扰记录可用 `examples/tune.py` 的 `hold/push/release/report` 命令，详见仓库 readme。自动试验使用目标阶跃，不等同于真实外力冲击；无力传感器时不能给出 Nm/rad 的绝对刚度。线缆阻力可作为现有负载参与整定，实体极限不能用更高 PI 强推。
 
-UI 保留使能后自动平滑回到已有 0° 并保持，默认 5°/s、pitch 指令上限 40°。启动前自动开启原始 Log；轨迹起点沿用下发给 `enable_at()` 的目标，不再用启动后的漂移反馈改写。UI 以 20 ms 计划周期查询反馈；通信/无效角度/目标发送失败、跟随误差超过 3°、pitch 反馈超过约 43°，或固定目标 1 秒窗口内摆幅超过 1°，均请求失能并停止发目标。实际周期包含串口和 UI 耗时，不保证实时响应，保护也不代替物理急停。SDK API 的 `set_deg()` 仍立即下发，其他调用方必须自行处理运动轨迹和反馈保护；本次不置零、不持久保存参数。
+UI 保留使能后回到已有 0° 并保持，默认最高速度 120°/s、加速度 600°/s²、pitch 指令上限 40°，使用 SDK 的 `HeadTracker` 生成连续加减速目标。启动前自动开启 Log，轨迹从初始下发目标建立。UI 20 ms 计划周期查询反馈，实际周期包含串口/界面耗时。运动中允许误差为 `3 + min(9, 0.12 × 最近0.5秒内最高实际下发速度)` 度，最高12°；运动停止0.5秒后恢复3°上限。到位监测避开初始收敛，进入±0.5°或最长等待1秒后，用1秒窗口检查超过1°摆幅。通信/发送错误、反馈越界、控制周期超过 `HeadTracker.max_gap_s` 等均请求失能；保护不等于物理急停。本次不保存 PI 或改零点。
 
 ```bash
 F32C_PYTHON=/usr/bin/python3 ./package_sdk.sh

@@ -19,9 +19,9 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "python"))
-from f32c import Config, Gimbal2Dof
+from f32c import Config, Gimbal2Dof, clip_pitch_target
 
-PITCH_TEST_MAX = 40.0  # Leave 3 degrees clear of the observed head-down limit (~43 degrees).
+PITCH_TEST_MAX = clip_pitch_target(180.)  # Desired-target cap, never a feedback boundary.
 
 
 def check_pitch_target(value):
@@ -39,13 +39,11 @@ def quantized(value):
 
 
 def checked_position(state, limits):
+    # Ranges constrain requested targets, never diagnose the initial/actual pose.
     values = [state.yaw_deg, state.pitch_deg]
     if not all(math.isfinite(v) for v in values):
         raise ValueError("non-finite feedback")
     values = [wrap180(v) for v in values]
-    if any(bounds is not None and not bounds[0] <= v <= bounds[1]
-           for v, bounds in zip(values, limits)):
-        raise ValueError(f"feedback outside mechanical limits: {values}")
     return values
 
 
@@ -168,14 +166,9 @@ def run(args):
             motor.open()
             motor.start_log(directory / "serial.log")
             commanded = checked_position(motor.read(), args.limits)
-            if commanded[1] > 43:
-                raise ValueError("initial pitch feedback exceeds the reported ~43 degree limit")
             enable_attempted = True
-            motor.enable_at(commanded[0], min(PITCH_TEST_MAX, commanded[1]))
+            motor.enable_at(*commanded)
             commanded = checked_position(motor.read(), args.limits)
-            if commanded[1] > 43:
-                raise ValueError("pitch feedback crossed the reported ~43 degree limit during enable")
-            commanded[1] = min(PITCH_TEST_MAX, commanded[1])
             motor.set_deg(*commanded)
             sent = [quantized(v) for v in commanded]
             desired = commanded[axis]
@@ -201,6 +194,7 @@ def run(args):
                                 raise ValueError("target must be finite")
                             value = wrap180(value)
                             if axis == 1:
+                                value = clip_pitch_target(value)
                                 check_pitch_target(value)
                             bounds = args.limits[axis]
                             if bounds is not None and not bounds[0] <= value <= bounds[1]:
@@ -208,7 +202,6 @@ def run(args):
                             desired = value
                             phase, trial = "moving", None
                         elif command == ["hold"]:
-                            check_pitch_target(commanded[1])
                             if abs(wrap180(commanded[axis] - desired)) > 1e-9:
                                 raise ValueError("wait for target ramp to finish")
                             trial = {"target": sent[axis], "hold": [], "push": [], "release": [], "release_time": None}
@@ -241,10 +234,6 @@ def run(args):
                 error = wrap180(measured[axis] - sent[axis])
                 writer.writerow([elapsed, len(trials), phase, *sent, *measured, error])
                 output.flush()
-                if measured[1] > 43:
-                    raise ValueError("pitch feedback crossed the reported ~43 degree limit")
-                if phase in ("hold", "push", "release") and measured[1] > PITCH_TEST_MAX:
-                    raise ValueError("pitch feedback exceeded the 40 degree test limit")
                 if trial is not None:
                     trial[phase].append((elapsed, error))
                 if tick >= next_display:

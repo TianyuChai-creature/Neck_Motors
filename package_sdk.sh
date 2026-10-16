@@ -18,6 +18,7 @@ src_dir="$tmp_dir/python-src"
 mkdir -p "$root_dir/wheel" "$src_dir/python/f32c" "$src_dir/docs" "$tmp_dir/out"
 
 cmake -S "$root_dir" -B "$tmp_dir/build" -DF32C_BUILD_ZED=OFF \
+    -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="$src_dir/python/f32c/native" -DCMAKE_INSTALL_LIBDIR=lib -Wno-dev
 cmake --build "$tmp_dir/build" -j2
 ctest --test-dir "$tmp_dir/build" --output-on-failure
@@ -27,6 +28,10 @@ PYTHONPATH="$root_dir/python" F32C_LIBRARY_DIR="$native_lib_dir" "$python_bin" "
 F32C_LIBRARY_DIR="$native_lib_dir" "$python_bin" "$root_dir/tests/test_runtime_pi.py"
 "$python_bin" "$root_dir/tests/test_tuning.py"
 "$python_bin" "$root_dir/tests/test_tracking.py"
+PYTHONPATH="$root_dir/python" F32C_LIBRARY_DIR="$native_lib_dir" \
+    "$python_bin" "$root_dir/tests/test_controller.py"
+PYTHONPATH="$root_dir/python" F32C_LIBRARY_DIR="$native_lib_dir" \
+    "$python_bin" "$root_dir/tests/test_receive.py"
 
 cp "$root_dir/pyproject.toml" "$root_dir/setup.py" "$src_dir/"
 cp "$root_dir/python/f32c/"*.py "$src_dir/python/f32c/"

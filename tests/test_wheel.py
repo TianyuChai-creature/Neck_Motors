@@ -56,7 +56,7 @@ def validate(path: Path) -> None:
                 contents = archive.read(name).decode().lower()
                 require("zed" not in contents and "camera" not in contents,
                         f"camera target remains in CMake metadata: {name}")
-        for header in ("gimbal.hpp", "c_api.h"):
+        for header in ("gimbal.hpp", "c_api.h", "protocol.hpp"):
             require(archive.read(prefix + "native/include/f32c/" + header) ==
                     (ROOT / "include/f32c" / header).read_bytes(),
                     f"installed public header differs from source: {header}")

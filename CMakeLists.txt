@@ -1,13 +1,16 @@
 cmake_minimum_required(VERSION 3.16)
-project(f32c_sdk VERSION 0.2.6 LANGUAGES CXX)
+project(f32c_sdk VERSION 0.3.0 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
+include(CTest)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(F32C_BUILD_ZED "Build the legacy camera example outside the installed motor SDK" OFF)
+option(F32C_BUILD_EXAMPLES "Build command-line examples" ON)
+find_package(Threads REQUIRED)
 
 add_library(f32c SHARED
     src/serial_port.cpp
@@ -20,7 +23,10 @@ target_include_directories(f32c
            $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
+target_compile_features(f32c PUBLIC cxx_std_17)
+target_link_libraries(f32c PRIVATE Threads::Threads)
 
+if(BUILD_TESTING)
 add_executable(test_protocol tests/test_protocol.cpp)
 target_link_libraries(test_protocol PRIVATE f32c)
 
@@ -31,7 +37,6 @@ target_link_libraries(test_serial_log PRIVATE f32c util)
 add_executable(test_sdk_api tests/test_sdk_api.cpp)
 target_link_libraries(test_sdk_api PRIVATE f32c)
 
-find_package(Threads REQUIRED)
 add_executable(test_fault_paths tests/test_fault_paths.cpp
     src/serial_port.cpp src/motor.cpp src/gimbal.cpp src/c_api.cpp)
 target_include_directories(test_fault_paths PRIVATE include src)
@@ -44,7 +49,9 @@ add_test(NAME serial_log COMMAND test_serial_log)
 add_test(NAME sdk_api COMMAND test_sdk_api)
 add_test(NAME fault_paths COMMAND test_fault_paths)
 set_tests_properties(fault_paths PROPERTIES TIMEOUT 10)
+endif()
 
+if(F32C_BUILD_EXAMPLES)
 add_executable(f32c_ping examples/ping.cpp)
 target_link_libraries(f32c_ping PRIVATE f32c)
 
@@ -53,6 +60,7 @@ target_link_libraries(f32c_hold PRIVATE f32c)
 
 add_executable(f32c_zero examples/zero.cpp)
 target_link_libraries(f32c_zero PRIVATE f32c)
+endif()
 
 if(F32C_BUILD_ZED)
     set(LINK_SHARED_ZED ON)
@@ -74,7 +82,7 @@ if(F32C_BUILD_ZED)
 endif()
 
 install(TARGETS f32c EXPORT f32cTargets LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
-install(FILES include/f32c/gimbal.hpp include/f32c/c_api.h
+install(FILES include/f32c/gimbal.hpp include/f32c/c_api.h include/f32c/protocol.hpp
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/f32c)
 install(FILES docs/SDK使用说明.md DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/f32c)
 install(EXPORT f32cTargets NAMESPACE f32c:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/f32c)

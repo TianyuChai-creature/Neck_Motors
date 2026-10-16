@@ -85,7 +85,6 @@ void f32c_close(f32c_gimbal* g) {
 
 int f32c_close_checked(f32c_gimbal* g) {
     if (!g) return 1;
-    g->g.disable();
     const bool ok = g->g.close_checked();
     open_error = ok ? "" : g->g.last_error();
     delete g;
@@ -118,9 +117,14 @@ int f32c_set_pitch_deg(f32c_gimbal* g, double pitch_deg) {
 }
 
 int f32c_read(f32c_gimbal* g, double* yaw_deg, double* pitch_deg) {
+    return f32c_read_timeout(g, yaw_deg, pitch_deg, 100);
+}
+
+int f32c_read_timeout(f32c_gimbal* g, double* yaw_deg, double* pitch_deg, unsigned timeout_ms) {
     if (!g || !yaw_deg || !pitch_deg) return 0;
+    if (timeout_ms == 0 || timeout_ms > 1000) return 0;
     f32c::Gimbal2Dof::State s;
-    if (!g->g.read(&s)) return 0;
+    if (!g->g.read_timeout(&s, static_cast<int>(timeout_ms))) return 0;
     *yaw_deg = s.yaw_deg;
     *pitch_deg = s.pitch_deg;
     return 1;

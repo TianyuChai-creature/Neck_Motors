@@ -47,6 +47,7 @@ int f32c_set_deg(f32c_gimbal* g, double yaw_deg, double pitch_deg);
 int f32c_set_yaw_deg(f32c_gimbal* g, double yaw_deg);
 int f32c_set_pitch_deg(f32c_gimbal* g, double pitch_deg);
 int f32c_read(f32c_gimbal* g, double* yaw_deg, double* pitch_deg);
+int f32c_read_timeout(f32c_gimbal* g, double* yaw_deg, double* pitch_deg, unsigned timeout_ms);
 /* Sets the current physical pose as zero and saves it to both motors. */
 int f32c_set_zero(f32c_gimbal* g);
 int f32c_start_log(f32c_gimbal* g, const char* path);

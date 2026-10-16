@@ -57,6 +57,8 @@ public:
     bool set_yaw_deg(double yaw_deg);
     bool set_pitch_deg(double pitch_deg);
     bool read(State* out);
+    // One deadline for both axes and their retries, including serial writes.
+    bool read_timeout(State* out, int timeout_ms);
     bool set_zero();
     bool start_log(const std::string& path);
     void stop_log();

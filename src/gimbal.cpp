@@ -4,6 +4,7 @@
 #include "serial_port.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -230,13 +231,21 @@ bool Gimbal2Dof::set_pitch_deg(double pitch_deg) {
 }
 
 bool Gimbal2Dof::read(State* out) {
+    return read_timeout(out, 100);
+}
+
+bool Gimbal2Dof::read_timeout(State* out, int timeout_ms) {
     if (!out) return impl_->fail("output state is null");
+    if (timeout_ms <= 0 || timeout_ms > 1000) return impl_->fail("read timeout must be within 1..1000 ms");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    auto remaining = [&] { return std::max(0, static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        deadline - std::chrono::steady_clock::now()).count())); };
     State s;
-    if (!impl_->yaw.read_deg(&s.yaw_deg)) {
+    if (!impl_->yaw.read_deg(&s.yaw_deg, std::min(50, remaining()))) {
         *out = s;
         return impl_->fail("yaw read failed");
     }
-    if (!impl_->pitch.read_deg(&s.pitch_deg)) {
+    if (!impl_->pitch.read_deg(&s.pitch_deg, std::min(50, remaining()))) {
         *out = s;
         return impl_->fail("pitch read failed");
     }

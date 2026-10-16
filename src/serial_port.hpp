@@ -19,8 +19,11 @@ public:
     void close();
     bool is_open() const { return fd_ >= 0; }
 
-    bool write_all(const uint8_t* data, size_t n);
-    bool write_all(const std::vector<uint8_t>& v) { return write_all(v.data(), v.size()); }
+    bool write_all(const uint8_t* data, size_t n, int timeout_ms = write_timeout_ms);
+    bool write_all(const std::vector<uint8_t>& v, int timeout_ms = write_timeout_ms) {
+        return write_all(v.data(), v.size(), timeout_ms);
+    }
+    std::vector<uint8_t> read_some(int timeout_ms);
     std::vector<uint8_t> read_for(int timeout_ms);
     void flush_input();
     bool start_log(const std::string& path);

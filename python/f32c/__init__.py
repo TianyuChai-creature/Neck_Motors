@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import ctypes as C
+import math
 import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 __all__ = ["Config", "F32CError", "Gimbal2Dof", "State", "native_prefix",
-           "HeadTracker", "TrackingConfig", "TrackingError"]
+           "HeadTracker", "TrackingConfig", "TrackingError", "HeadController",
+           "ProtectionConfig", "ControlSnapshot", "HeadControlError", "clip_pitch_target"]
 
 
 class F32CError(RuntimeError):
@@ -36,6 +38,9 @@ class Config:
     def _validate(self) -> None:
         if self.device is not None and not isinstance(self.device, str):
             raise ValueError("device must be a string or None")
+        for name, _ in _CConfig._fields_:
+            if name != "device" and type(getattr(self, name)) is not int:
+                raise ValueError(f"{name} must be an integer")
         if self.baud not in (9600, 57600, 115200):
             raise ValueError("unsupported baud rate")
         if not 1 <= self.id_yaw <= 255 or not 1 <= self.id_pitch <= 255 or self.id_yaw == self.id_pitch:
@@ -156,9 +161,18 @@ class Gimbal2Dof:
     def ping(self) -> bool:
         return bool(self._lib.f32c_ping(self._require_open()))
 
-    def read(self) -> State:
+    def read(self, *, timeout_s: float | None = None) -> State:
         yaw, pitch = C.c_double(), C.c_double()
-        self._check(self._lib.f32c_read(self._require_open(), C.byref(yaw), C.byref(pitch)))
+        if timeout_s is None:
+            ok = self._lib.f32c_read(self._require_open(), C.byref(yaw), C.byref(pitch))
+        else:
+            if isinstance(timeout_s, bool) or not isinstance(timeout_s, (int, float)) or not math.isfinite(timeout_s) or not 0 < timeout_s <= 1:
+                raise ValueError("timeout_s must be a finite number in (0, 1]")
+            _bind(self._lib, "f32c_read_timeout", C.c_int, C.c_void_p,
+                  C.POINTER(C.c_double), C.POINTER(C.c_double), C.c_uint)
+            ok = self._lib.f32c_read_timeout(self._require_open(), C.byref(yaw), C.byref(pitch),
+                                             max(1, math.ceil(timeout_s * 1000)))
+        self._check(ok)
         return State(yaw.value, pitch.value)
 
     def enable(self) -> None:
@@ -221,3 +235,4 @@ class Gimbal2Dof:
 
 # The pure tracking module shares State, so import it after that type is defined.
 from .tracking import HeadTracker, TrackingConfig, TrackingError
+from .controller import HeadController, ProtectionConfig, ControlSnapshot, HeadControlError, clip_pitch_target

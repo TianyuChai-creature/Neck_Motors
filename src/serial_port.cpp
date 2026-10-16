@@ -100,14 +100,14 @@ void SerialPort::close() {
     stop_log();
 }
 
-bool SerialPort::write_all(const uint8_t* data, size_t n) {
+bool SerialPort::write_all(const uint8_t* data, size_t n, int timeout_ms) {
     if (fd_ < 0) return false;
     using clock = std::chrono::steady_clock;
-    const auto deadline = clock::now() + std::chrono::milliseconds(write_timeout_ms);
+    const auto deadline = clock::now() + std::chrono::milliseconds(timeout_ms);
     size_t off = 0;
     while (off < n) {
         if (clock::now() >= deadline) {
-            log_text(log_, "TX_ERROR", "write timeout after " + std::to_string(write_timeout_ms) +
+            log_text(log_, "TX_ERROR", "write timeout after " + std::to_string(timeout_ms) +
                      " ms, sent " + std::to_string(off) + "/" + std::to_string(n) + " bytes");
             return false;
         }
@@ -123,6 +123,22 @@ bool SerialPort::write_all(const uint8_t* data, size_t n) {
     }
     log_bytes(log_, "TX", data, n);
     return true;
+}
+
+std::vector<uint8_t> SerialPort::read_some(int timeout_ms) {
+    if (fd_ < 0) return {};
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    uint8_t buf[128];
+    while (std::chrono::steady_clock::now() < deadline) {
+        const auto n = ::read(fd_, buf, sizeof(buf));
+        if (n > 0) {
+            log_bytes(log_, "RX", buf, static_cast<size_t>(n));
+            return {buf, buf + n};
+        }
+        if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) return {};
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return {};
 }
 
 std::vector<uint8_t> SerialPort::read_for(int timeout_ms) {

@@ -114,8 +114,7 @@ class TuningTests(unittest.TestCase):
         self.assertEqual(tune.Config().pitch_speed_kp, 30)
         state = SimpleNamespace(yaw_deg=350, pitch_deg=359.9)
         self.assertAlmostEqual(tune.checked_position(state, [None, None])[0], -10)
-        with self.assertRaises(ValueError):
-            tune.checked_position(state, [[-5, 5], None])
+        self.assertEqual(tune.checked_position(state, [[-5, 5], None])[0], -10)
         with self.assertRaises(ValueError):
             tune.checked_position(SimpleNamespace(yaw_deg=float("nan"), pitch_deg=0), [None, None])
         for extra in (["--speed-kp", "257"], ["--hz", "nan"], ["--pitch-range", "20", "10"]):
@@ -127,15 +126,15 @@ class TuningTests(unittest.TestCase):
             autotune.run(autotune.parse_args([]))
 
     def test_pitch_limit_includes_validation_steps_before_hardware_opens(self):
-        autotune.check_test_pose([0, 37], 1, 3)
+        autotune.check_test_pose([0, 42], 1, 3)
         autotune.check_test_pose([0, -100], 1, 3)
-        for center in ([0, 38], [0, 56.8]):
+        for center in ([0, 43], [0, 56.8]):
             with self.assertRaises(ValueError):
                 autotune.check_test_pose(center, 1, 3)
         with tempfile.TemporaryDirectory() as tmp, patch.object(autotune, "Gimbal2Dof", side_effect=AssertionError("hardware opened")):
             args = autotune.parse_args([])
             with self.assertRaises(ValueError):
-                autotune.evaluate(args.config, 1, [0, 38], args, Path(tmp), "invalid")
+                autotune.evaluate(args.config, 1, [0, 43], args, Path(tmp), "invalid")
 
     def test_invalid_validation_plan_never_enables(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -150,12 +149,12 @@ class TuningTests(unittest.TestCase):
     def test_pitch_ramp_never_wraps_through_head_down_limit(self):
         args = autotune.parse_args(["--move-speed", "60", "--hold-seconds", "1", "--recovery-seconds", "1"])
         motor = Motor(args.config)
-        motor.position = motor.target = [0., 40.]
+        motor.position = motor.target = [0., 45.2]
         clock = Clock()
         with tempfile.TemporaryDirectory() as tmp, patch.object(autotune, "Gimbal2Dof", return_value=motor), patch.object(autotune, "time", clock):
             autotune.evaluate(args.config, 1, [0, -170], args, Path(tmp), "negative_pitch")
         targets = [event[1] for event in motor.events if isinstance(event, tuple) and isinstance(event[0], (int, float))]
-        self.assertLessEqual(max(targets), 40)
+        self.assertLessEqual(max(targets), 45.2)
         self.assertLess(min(targets), -170)
 
     def test_manual_exit_and_partial_enable_cleanup(self):
@@ -176,7 +175,7 @@ class TuningTests(unittest.TestCase):
                         tune.run(args)
                 self.assertEqual(motor.events[-2:], ["disable", "close"])
                 targets = [e[1] for e in motor.events if isinstance(e, tuple) and isinstance(e[0], (int, float))]
-                self.assertTrue(all(value <= 40 for value in targets))
+                self.assertTrue(all(value <= 45 for value in targets))
                 if failure is None:
                     self.assertTrue(targets)
                 record = json.loads(next(Path(tmp).glob("tune_*/run.json")).read_text())

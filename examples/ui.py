@@ -4,9 +4,8 @@
 from __future__ import annotations
 
 import ctypes
-from collections import deque
+from dataclasses import asdict
 import json
-import math
 import sys
 import time
 from pathlib import Path
@@ -30,9 +29,8 @@ from PySide6.QtWidgets import (
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "python"))
-from f32c import HeadTracker, State, TrackingConfig, TrackingError, _CConfig
+from f32c import Config, F32CError, HeadController, HeadControlError, TrackingConfig
 
-MOTOR_LIB = ROOT / "build" / "libf32c.so"
 ZED_LIB_CANDIDATES = (ROOT / "build-zed" / "libf32c_zed.so", ROOT / "build" / "libf32c_zed.so")
 
 ZED_VIEWS = {"左眼": 0, "右眼": 1, "并排": 2}
@@ -65,42 +63,8 @@ class ZedImageView(ctypes.Structure):
     ]
 
 
-def load_motor_lib():
-    if not MOTOR_LIB.exists():
-        sys.exit(f"missing {MOTOR_LIB} — run: cmake -S . -B build && cmake --build build")
-    lib = ctypes.CDLL(str(MOTOR_LIB))
-    lib.f32c_open.restype = ctypes.c_void_p
-    lib.f32c_open.argtypes = [ctypes.c_char_p, ctypes.c_uint, ctypes.c_uint]
-    lib.f32c_config_defaults.argtypes = [ctypes.POINTER(_CConfig)]
-    lib.f32c_config_defaults.restype = None
-    lib.f32c_open_config.argtypes = [ctypes.POINTER(_CConfig)]
-    lib.f32c_open_config.restype = ctypes.c_void_p
-    lib.f32c_close.argtypes = [ctypes.c_void_p]
-    lib.f32c_close_checked.argtypes = [ctypes.c_void_p]
-    lib.f32c_close_checked.restype = ctypes.c_int
-    lib.f32c_last_error.argtypes = [ctypes.c_void_p]
-    lib.f32c_last_error.restype = ctypes.c_char_p
-    lib.f32c_enable.argtypes = [ctypes.c_void_p]
-    lib.f32c_enable_at.argtypes = [ctypes.c_void_p, ctypes.c_double, ctypes.c_double]
-    lib.f32c_disable.argtypes = [ctypes.c_void_p]
-    lib.f32c_set_deg.argtypes = [ctypes.c_void_p, ctypes.c_double, ctypes.c_double]
-    lib.f32c_set_yaw_deg.argtypes = [ctypes.c_void_p, ctypes.c_double]
-    lib.f32c_set_pitch_deg.argtypes = [ctypes.c_void_p, ctypes.c_double]
-    lib.f32c_read.argtypes = [
-        ctypes.c_void_p,
-        ctypes.POINTER(ctypes.c_double),
-        ctypes.POINTER(ctypes.c_double),
-    ]
-    lib.f32c_start_log.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
-    lib.f32c_stop_log.argtypes = [ctypes.c_void_p]
-    return lib
 
 
-def open_motor(lib, device):
-    config = _CConfig()
-    lib.f32c_config_defaults(ctypes.byref(config))
-    config.device = device
-    return lib.f32c_open_config(ctypes.byref(config))
 
 
 def load_zed_lib():
@@ -135,7 +99,7 @@ class AxisRow(QWidget):
         if name == "yaw":
             self.slider.setRange(-600, 600)
         else:
-            self.slider.setRange(-1800, 400)
+            self.slider.setRange(-1800, 450)
         self.slider.valueChanged.connect(self._changed)
         self.slider.sliderReleased.connect(lambda: self._on_change(self.name, True))
         layout.addWidget(self.slider, 1)
@@ -186,26 +150,15 @@ class CameraSettingRow(QWidget):
 
 
 class Panel(QWidget):
-    def __init__(self, motor_lib, motor_handle):
+    def __init__(self, head: HeadController):
         super().__init__()
-        self.lib = motor_lib
-        self.handle = motor_handle
-        self.armed = False
-        self.disable_request_sent = None
+        self.head = head
         self.zed_lib = None
         self.zed_handle = None
         self.camera_frame_count = 0
         self.camera_fps_started = 0.0
         self.logging = False
         self.log_path = None
-        self.hold_samples = deque()
-        self.hold_target = None
-        self.hold_target_since = 0.
-        self.motion_samples = {axis: deque() for axis in ("yaw", "pitch")}
-        self.tracker = None
-        self.measured_angles = None
-        self.following_limited = set()
-        self.progress_samples = deque()
         self.setWindowTitle("F32C 2-DoF + ZED Mini")
 
         self.status = QLabel("未使能（硬件状态未确认）")
@@ -217,9 +170,9 @@ class Panel(QWidget):
 
         motor_box = QGroupBox("两轴电机")
         motor_layout = QVBoxLayout(motor_box)
-        motor_layout.addWidget(QLabel("回零保持：yaw ±60°，pitch ≤40°"))
+        motor_layout.addWidget(QLabel("回零保持：yaw ±60°，pitch 目标截断到45°"))
         btn_row = QHBoxLayout()
-        self.btn_en = QPushButton("使能")
+        self.btn_en = QPushButton("使能并回0°")
         self.btn_dis = QPushButton("失能")
         self.btn_home = QPushButton("到 0°")
         self.btn_en.clicked.connect(self.enable)
@@ -293,20 +246,13 @@ class Panel(QWidget):
         root.addWidget(self.status)
         root.addLayout(body, 1)
 
-        y, p = ctypes.c_double(), ctypes.c_double()
-        if self.lib.f32c_read(self.handle, ctypes.byref(y), ctypes.byref(p)):
-            self.yaw.set_deg(y.value)
-            self.pitch.set_deg(p.value)
+        initial = self.head.read()
+        self.yaw.set_deg(initial.yaw_deg)
+        self.pitch.set_deg(initial.pitch_deg)
         self.desired_angles = {"yaw": self.yaw.deg(), "pitch": self.pitch.deg()}
-        self.commanded_angles = dict(self.desired_angles)
-        self._last_command_tick = time.monotonic()
-
         self.motor_timer = QTimer(self)
-        self.motor_timer.timeout.connect(self.poll_motors)
-        self.motor_timer.start(20)
-        self.command_timer = QTimer(self)
-        self.command_timer.timeout.connect(self.step_targets)
-        self.command_timer.start(20)
+        self.motor_timer.timeout.connect(self.step_targets)
+        self.motor_timer.start(33)
         self.camera_timer = QTimer(self)
         self.camera_timer.timeout.connect(self.poll_camera)
         for row in self.camera_settings.values():
@@ -314,203 +260,82 @@ class Panel(QWidget):
         self.camera_auto.setEnabled(False)
 
     def send(self, axis: str = "", force: bool = False) -> None:
-        if axis == "yaw":
-            self.desired_angles["yaw"] = self.yaw.deg()
-        elif axis == "pitch":
-            self.desired_angles["pitch"] = self.pitch.deg()
-        else:
-            self.desired_angles = {"yaw": self.yaw.deg(), "pitch": self.pitch.deg()}
+        self.desired_angles = {"yaw": self.yaw.deg(), "pitch": self.pitch.deg()}
+        if self.head.enabled:
+            self.head.move_to(self.desired_angles["yaw"], self.desired_angles["pitch"])
 
     def step_targets(self) -> None:
-        now = time.monotonic()
-        dt = min(0.05, max(0.0, now - self._last_command_tick))
-        self._last_command_tick = now
-        if not self.armed:
+        if not self.head.enabled:
+            self.poll_motors()
             return
         try:
-            if (self.tracker is None or self.tracker.config.max_speed_deg_s != self.smooth_speed.value()
-                    or (abs(self.commanded_angles["yaw"]) <= 60 and self.tracker.config.yaw_limits != (-60, 60))):
-                self.tracker = HeadTracker(
-                    State(self.commanded_angles["yaw"], self.commanded_angles["pitch"]),
-                    TrackingConfig(pitch_limits=(-180, 40),
-                                   yaw_limits=(min(-60, self.commanded_angles["yaw"]), max(60, self.commanded_angles["yaw"])),
-                                   max_speed_deg_s=self.smooth_speed.value(),
-                                   max_accel_deg_s2=600, deadband_deg=0, hysteresis_deg=0),
-                    timestamp=now - dt)
-            self.tracker.set_target(self.desired_angles["yaw"], self.desired_angles["pitch"], timestamp=now)
-            next_command = self.tracker.step(timestamp=now)
-        except (ValueError, TrackingError) as exc:
-            self.fault(f"目标轨迹生成失败: {exc}")
-            return
-        limited = False
-        for axis, setter in (
-            ("yaw", self.lib.f32c_set_yaw_deg),
-            ("pitch", self.lib.f32c_set_pitch_deg),
-        ):
-            current = self.commanded_angles[axis]
-            command = next_command.yaw_deg if axis == "yaw" else next_command.pitch_deg
-            if self.measured_angles is not None:
-                error = current - self.measured_angles[axis]
-                delta = command - current
-                if axis == "yaw":
-                    error, delta = wrap180(error), wrap180(delta)
-                if error * delta > 0 and abs(error + delta) > 9:
-                    limited = True
-                    self.following_limited.add(axis)
-                    continue
-            if round(command * 10) == round(current * 10):
-                continue
-            if not setter(self.handle, command):
-                self.fault(f"{axis} 目标发送失败")
-                return
-            distance = wrap180(command - current) if axis == "yaw" else command - current
-            self.motion_samples[axis].append((now, abs(distance) / max(dt, 1e-6)))
-            self.commanded_angles[axis] = command
-        if limited:
-            self.tracker.reset(State(self.commanded_angles["yaw"], self.commanded_angles["pitch"]), timestamp=now)
+            if self.head.tracking.max_speed_deg_s != self.smooth_speed.value():
+                self.head.set_motion_limits(self.smooth_speed.value(), 600)
+            state = self.head.tick()
+            self.show_state(state)
+        except HeadControlError as exc:
+            self.fault(str(exc))
 
     def enable(self) -> None:
         if not self.logging:
             self.toggle_log()
         if not self.logging:
-            self.fault("无法记录启动日志，取消使能")
+            self.status.setText("无法记录启动日志")
             return
-        y, p = ctypes.c_double(), ctypes.c_double()
-        if not self.lib.f32c_read(self.handle, ctypes.byref(y), ctypes.byref(p)):
-            self.disable()
-            QMessageBox.critical(self, "F32C", "读取当前角度失败，取消使能")
-            return
-        if not math.isfinite(y.value) or not math.isfinite(p.value) or wrap180(p.value) > 43:
-            self.fault("使能前角度无效或 pitch 超过已知边界")
-            return
-        initial = {"yaw": wrap180(y.value), "pitch": min(40.0, wrap180(p.value))}
-        if not self.lib.f32c_enable_at(self.handle, initial["yaw"], initial["pitch"]):
-            error = self.lib.f32c_last_error(self.handle)
-            self.fault("使能失败：" + (error.decode(errors="replace") if error else "原因未知"))
-            QMessageBox.critical(self, "F32C", self.status.text())
-            return
-        y, p = ctypes.c_double(), ctypes.c_double()
-        if not self.lib.f32c_read(self.handle, ctypes.byref(y), ctypes.byref(p)):
-            self.disable()
-            QMessageBox.critical(self, "F32C", "读取当前角度失败，取消回零；" + self.status.text())
-            return
-        self.commanded_angles = initial
-        self.tracker = None
-        self.following_limited = set()
-        self.progress_samples.clear()
-        self.hold_samples.clear()
-        self.hold_target = None
-        for samples in self.motion_samples.values():
-            samples.clear()
-        self.armed = True
-        self.status.setText("使能")
-        self._last_command_tick = time.monotonic()
-        if not self.check_feedback(y.value, p.value):
-            return
-        self.go_zero()
+        try:
+            if self.head.phase == "fault":
+                self.head.reset_fault()  # This button is the explicit operator action.
+            self.show_state(self.head.enable())
+            self.go_zero()
+        except F32CError as exc:
+            self.fault(str(exc))
+            QMessageBox.critical(self, "F32C", str(exc))
 
     def disable(self) -> bool:
-        self.armed = False
-        self.tracker = None
-        self.following_limited = set()
-        self.progress_samples.clear()
-        self.hold_samples.clear()
-        self.hold_target = None
-        for samples in self.motion_samples.values():
-            samples.clear()
-        self.disable_request_sent = bool(self.lib.f32c_disable(self.handle))
-        self.status.setText("已发送失能请求（硬件状态未确认）" if self.disable_request_sent
-                            else "失能请求失败（硬件状态未知，请断电）")
-        return self.disable_request_sent
+        try:
+            self.head.disable()
+        except F32CError as exc:
+            self.status.setText("失能请求失败（硬件状态未知）：" + str(exc))
+            return False
+        self.status.setText("已发送失能请求（硬件状态未确认）")
+        return True
 
     def fault(self, reason: str) -> None:
-        record = {"reason": reason, "target": dict(self.commanded_angles),
-                  "desired": dict(self.desired_angles), "measured": self.measured_angles,
-                  "following_limited": sorted(self.following_limited)}
-        self.disable()
-        record["disable_request_sent"] = self.disable_request_sent
-        record["hardware_state"] = "unknown"
+        if self.head.enabled:
+            self.disable()
+        record = asdict(self.head.snapshot)
+        record.update(reason=reason, hardware_state="unknown")
         if self.log_path is not None:
             try:
                 self.log_path.with_suffix(".fault.json").write_text(json.dumps(record, indent=2) + "\n")
-            except OSError:
-                pass
-        self.status.setText(reason + "；" + self.status.text())
+            except OSError as exc:
+                print(f"Cannot save F32C fault: {exc}", file=sys.stderr)
+        self.status.setText("Neck 故障：" + reason)
 
-    def check_feedback(self, yaw: float, pitch: float) -> bool:
-        measured = {"yaw": wrap180(yaw), "pitch": wrap180(pitch)}
-        now = time.monotonic()
-        allowance = {}
-        errors_by_axis = {"yaw": wrap180(measured["yaw"] - self.commanded_angles["yaw"]),
-                          "pitch": measured["pitch"] - self.commanded_angles["pitch"]}
-        self.measured_angles = measured
-        for axis in tuple(self.following_limited):
-            if abs(errors_by_axis[axis]) < 3:
-                self.following_limited.remove(axis)
-        for axis, samples in self.motion_samples.items():
-            while samples and samples[0][0] < now - .5:
-                samples.popleft()
-            # Permit measured motion lag while retaining a bounded fault limit.
-            allowance[axis] = 3 + min(9, .12 * max((speed for _, speed in samples), default=0))
-            if axis in self.following_limited:
-                allowance[axis] = 12
-        if (not all(math.isfinite(value) for value in measured.values())
-                or measured["pitch"] > 43 + 1e-9
-                or abs(wrap180(measured["yaw"] - self.commanded_angles["yaw"])) > allowance["yaw"] + 1e-9
-                or abs(measured["pitch"] - self.commanded_angles["pitch"]) > allowance["pitch"] + 1e-9):
-            details = ", ".join(f"{axis}: 实测{measured[axis]:.1f}°/下发{self.commanded_angles[axis]:.1f}°/误差{errors_by_axis[axis]:+.1f}°/上限{allowance[axis]:.1f}°"
-                                for axis in ("yaw", "pitch"))
-            self.fault("反馈越界或跟随误差超限；" + details)
-            return False
-        self.progress_samples.append((now, measured, errors_by_axis))
-        while len(self.progress_samples) > 1 and self.progress_samples[1][0] <= now - 1.5:
-            self.progress_samples.popleft()
-        if now - self.progress_samples[0][0] >= 1.5:
-            for axis in ("yaw", "pitch"):
-                origin = self.progress_samples[0][1][axis]
-                positions = [wrap180(row[1][axis] - origin) for row in self.progress_samples]
-                if (all(abs(row[2][axis]) > 6 for row in self.progress_samples)
-                        and max(positions) - min(positions) <= .3 + 1e-9):
-                    self.fault(f"{axis} 持续跟随误差超过6°且无运动进展")
-                    return False
-        target = tuple(self.commanded_angles[axis] for axis in ("yaw", "pitch"))
-        if target != self.hold_target:
-            self.hold_samples.clear()
-            self.hold_target = target
-            self.hold_target_since = now
-        if (any(abs(self.commanded_angles[axis] - self.desired_angles[axis]) > .1
-                for axis in ("yaw", "pitch")) or any(self.motion_samples.values())):
-            self.hold_samples.clear()
-            return True
-        errors = tuple(wrap180(measured[axis] - self.commanded_angles[axis]) for axis in ("yaw", "pitch"))
-        if not self.hold_samples and max(map(abs, errors)) > .5 and now - self.hold_target_since < 1:
-            return True
-        self.hold_samples.append((now, errors))
-        while self.hold_samples and self.hold_samples[0][0] < now - 1:
-            self.hold_samples.popleft()
-        if len(self.hold_samples) >= 3 and any(
-                max(row[1][axis] for row in self.hold_samples) - min(row[1][axis] for row in self.hold_samples) > 1 + 1e-9
-                for axis in (0, 1)):
-            self.fault("保持位置摆幅超过 1°")
-            return False
-        return True
+    def show_state(self, state) -> None:
+        if state.measured is not None:
+            self.yaw.set_meas(f"{state.measured.yaw_deg:.1f}°")
+            self.pitch.set_meas(f"{state.measured.pitch_deg:.1f}°")
+        labels = {"moving": "按 SDK 轨迹移动", "hold": "保持当前位置", "following": "跟随中",
+                  "source_hold": "输入暂停，保持目标", "off": "未使能"}
+        self.status.setText(labels.get(state.phase, state.phase) + (" · " + state.reason if state.reason else ""))
 
     def toggle_log(self) -> None:
         if self.logging:
-            self.lib.f32c_stop_log(self.handle)
+            self.head.stop_log()
             self.logging = False
             self.log_button.setText("开始 Log")
             self.log_status.setText("Log: 关闭")
             return
-
         log_dir = ROOT / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         path = log_dir / f"f32c_ui_{time.strftime('%Y%m%d_%H%M%S')}_{time.time_ns() % 1_000_000_000:09d}.log"
-        if not self.lib.f32c_start_log(self.handle, str(path).encode()):
-            QMessageBox.warning(self, "Log", f"无法打开日志文件：{path}")
+        try:
+            self.head.start_log(path)
+        except F32CError as exc:
+            QMessageBox.warning(self, "Log", str(exc))
             return
-        self.logging = True
-        self.log_path = path
+        self.logging, self.log_path = True, path
         self.log_button.setText("停止 Log")
         self.log_status.setText(f"Log: {path.name}")
 
@@ -520,19 +345,13 @@ class Panel(QWidget):
         self.send()
 
     def poll_motors(self) -> None:
-        y, p = ctypes.c_double(), ctypes.c_double()
-        if self.lib.f32c_read(self.handle, ctypes.byref(y), ctypes.byref(p)):
-            self.yaw.set_meas(f"{wrap180(y.value):.1f}°")
-            self.pitch.set_meas(f"{wrap180(p.value):.1f}°")
-            if self.armed:
-                self.check_feedback(y.value, p.value)
-            else:
-                self.commanded_angles = {"yaw": wrap180(y.value), "pitch": wrap180(p.value)}
-        else:
+        try:
+            self.head.read()
+            self.show_state(self.head.snapshot)
+        except (F32CError, ValueError) as exc:
             self.yaw.set_meas("读失败")
             self.pitch.set_meas("读失败")
-            if self.armed:
-                self.fault("电机反馈读取失败")
+            self.status.setText(str(exc))
 
     def zed_error(self) -> str:
         if not self.zed_lib or not self.zed_handle:
@@ -644,42 +463,37 @@ class Panel(QWidget):
             self.camera_fps_started = time.monotonic()
 
     def closeEvent(self, event) -> None:
-        if not self.handle:
-            event.accept()
-            return
         self.motor_timer.stop()
-        self.command_timer.stop()
-        self.armed = False
-        closed = bool(self.lib.f32c_close_checked(self.handle))
-        error = self.lib.f32c_last_error(None) if not closed else None
-        reason = error.decode(errors="replace") if error else ""
-        self.handle = None
+        closed, reason = True, ""
+        try:
+            self.head.close()
+        except F32CError as exc:
+            closed, reason = False, str(exc)
+            print(f"F32C 关闭清理失败，硬件状态未知：{reason}", file=sys.stderr)
         self.logging = False
-        self.disable_request_sent = closed
         if self.log_path is not None:
             try:
                 self.log_path.with_suffix(".close.json").write_text(json.dumps({
-                    "disable_request_sent": self.disable_request_sent, "close_request_sent": closed,
-                    "hardware_state": "unknown", "error": reason}, indent=2) + "\n")
-            except OSError:
-                pass
-        if not closed:
-            print(f"F32C 关闭清理失败，硬件状态未知，请断电：{reason}", file=sys.stderr)
+                    "cleanup_completed": closed, "hardware_state": "unknown", "error": reason}, indent=2) + "\n")
+            except OSError as exc:
+                print(f"Cannot save F32C close result: {exc}", file=sys.stderr)
         self.disconnect_camera()
         event.accept()
 
 
 def main() -> None:
-    lib = load_motor_lib()
-    device = sys.argv[1].encode() if len(sys.argv) > 1 else None
-    handle = open_motor(lib, device)
-    if not handle:
-        sys.exit("open/ping failed — check power, IDs 1/2, and the serial device")
     app = QApplication(sys.argv)
-    window = Panel(lib, handle)
-    window.resize(1100, 680)
-    window.show()
-    sys.exit(app.exec())
+    device = sys.argv[1] if len(sys.argv) > 1 else None
+    head = HeadController(Config(device=device), TrackingConfig(
+        yaw_limits=(-60, 60), pitch_limits=(-180, 45),
+        max_speed_deg_s=120, max_accel_deg_s2=600)).open()
+    try:
+        window = Panel(head)
+        window.resize(1100, 680)
+        window.show()
+        sys.exit(app.exec())
+    finally:
+        head.close()
 
 
 if __name__ == "__main__":

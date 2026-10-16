@@ -77,14 +77,12 @@ def evaluate(config, axis, center, args, directory, label, session=None):
                 motor.start_log(directory / "serial.log")
                 initial = checked_position(motor.read(), [None, None])
                 attempted = True
-                motor.enable_at(initial[0], min(PITCH_TEST_MAX, initial[1]))
+                motor.enable_at(*initial)
             else:
                 for name in ("yaw", "pitch"):
                     motor.set_pi(name, *(getattr(config, f"{name}_{gain}")
                                          for gain in ("speed_kp", "speed_ki", "pos_kp", "pos_ki")))
             commanded = [quantized(v) for v in checked_position(motor.read(), [None, None])]
-            pitch_start_ceiling = max(43, commanded[1]) + .3
-            commanded[1] = min(PITCH_TEST_MAX, commanded[1])
             motor.set_deg(*commanded)
             sent = list(commanded)
             previous = time.monotonic()
@@ -112,8 +110,6 @@ def evaluate(config, axis, center, args, directory, label, session=None):
                     error = wrap180(measured[axis] - center[axis])
                     writer.writerow([elapsed, phase, *sent, *measured, error])
                     output.flush()
-                    if measured[1] > (pitch_start_ceiling if phase == "approach" else PITCH_TEST_MAX):
-                        raise MotionFault("pitch feedback exceeded the 40 degree test limit")
                     if any(abs(wrap180(measured[i] - sent[i])) > args.abort_error for i in (0, 1)):
                         raise MotionFault(f"tracking error exceeded {args.abort_error}°: {measured}")
                     history.append((elapsed, [wrap180(measured[i] - center[i]) for i in (0, 1)],
@@ -263,7 +259,7 @@ def run(args):
                 check_test_pose(position, axis, args.step)
         attempted = True
         initial = manifest["initial_pose_deg"]
-        motor.enable_at(initial[0], min(PITCH_TEST_MAX, initial[1]))
+        motor.enable_at(*initial)
         def experiment(candidate, axis, position, label):
             directory = root / f"{len(manifest['experiments']):03d}_{label}"
             directory.mkdir()

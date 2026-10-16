@@ -3,6 +3,7 @@
 #include "f32c/protocol.hpp"
 
 #include <chrono>
+#include <algorithm>
 #include <thread>
 #include <vector>
 
@@ -44,22 +45,36 @@ bool Motor::set_pi(uint16_t speed_kp, uint16_t speed_ki, uint16_t pos_kp, uint16
     return true;
 }
 
-bool Motor::query_mech(double* deg) {
+bool Motor::query_mech(double* deg, int timeout_ms) {
+    using clock = std::chrono::steady_clock;
+    const auto deadline = clock::now() + std::chrono::milliseconds(timeout_ms);
+    auto remaining = [&] { return static_cast<int>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(deadline - clock::now()).count()); };
     port_.flush_input();
-    if (!port_.write_all(cmd_feedback_mech(id_))) return false;
-    auto raw = port_.read_for(kQueryMs);
-    auto fr = find_frame(raw.data(), raw.size());
-    if (!fr) return false;
-    if (fr->addr != id_ || fr->func != static_cast<uint8_t>(Feedback::MechAngleX10)) return false;
-    auto v = feedback_i32(*fr);
-    if (!v) return false;
-    *deg = static_cast<double>(*v) / 10.0;
-    return true;
+    if (!port_.write_all(cmd_feedback_mech(id_), remaining())) return false;
+    std::vector<uint8_t> raw;
+    while (remaining() > 0) {
+        const auto chunk = port_.read_some(remaining());
+        raw.insert(raw.end(), chunk.begin(), chunk.end());
+        if (const auto fr = find_mech_feedback(raw.data(), raw.size(), id_)) {
+            *deg = static_cast<double>(*feedback_i32(*fr)) / 10.0;
+            // Retain the former receive-idle gap before the next query on the bus.
+            std::this_thread::sleep_for(std::chrono::milliseconds(3));
+            return true;
+        }
+        // Keep enough suffix for a frame split across reads, bounding noise storage.
+        if (raw.size() > 256) raw.erase(raw.begin(), raw.end() - 8);
+    }
+    return false;
 }
 
-bool Motor::read_deg(double* deg) {
+bool Motor::read_deg(double* deg, int timeout_ms) {
+    using clock = std::chrono::steady_clock;
+    const auto deadline = clock::now() + std::chrono::milliseconds(timeout_ms);
     for (int i = 0; i < kRetries; ++i) {
-        if (query_mech(deg)) return true;
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - clock::now()).count();
+        if (remaining <= 0) break;
+        if (query_mech(deg, std::min(kQueryMs, static_cast<int>(remaining)))) return true;
     }
     return false;
 }

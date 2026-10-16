@@ -1,11 +1,11 @@
-# F32C Neck Motors SDK 0.2.6 使用说明
+# F32C Neck Motors SDK 0.3.0 使用说明
 
 ## 1. 发布内容与安装
 
-发布文件为 `wheel/f32c_neck_motors-0.2.6-py3-none-linux_x86_64.whl`，本说明同时复制至 `wheel/SDK使用说明.md`。轮子包含 Python 包 `f32c`（含 `HeadTracker`）、电机共享库 `libf32c.so`、电机 C/C++ 公开头文件、CMake 包配置和本说明。本 SDK 负责电机通信、参数设置和跟随目标生成。Python >=3.10；平台为 Linux x86_64，原生库需要兼容的 glibc/libstdc++。
+发布文件为 `wheel/f32c_neck_motors-0.3.0-py3-none-linux_x86_64.whl`，本说明同时复制至 `wheel/SDK使用说明.md`。轮子包含 Python 包 `f32c`（含 `HeadTracker`）、电机共享库 `libf32c.so`、电机 C/C++ 公开头文件、CMake 包配置和本说明。本 SDK 负责电机通信、参数设置和跟随目标生成。Python >=3.10；平台为 Linux x86_64，原生库需要兼容的 glibc/libstdc++。
 
 ```bash
-python3 -m pip install --upgrade wheel/f32c_neck_motors-0.2.6-py3-none-linux_x86_64.whl
+python3 -m pip install --upgrade wheel/f32c_neck_motors-0.3.0-py3-none-linux_x86_64.whl
 python3 -c 'import f32c; from importlib.metadata import version; print(version("f32c-neck-motors")); print(f32c.native_prefix())'
 python3 -c 'from f32c import HeadTracker, TrackingConfig, TrackingError; print("HeadTracker API available")'
 ```
@@ -14,50 +14,33 @@ python3 -c 'from f32c import HeadTracker, TrackingConfig, TrackingError; print("
 
 0.2.0 将发布内容收敛为电机 SDK，保留 `HeadTracker`、`TrackingConfig`、`TrackingError` 和运行时 `set_pi()`，沿用原有电机配置结构和默认 PI。图像采集相关的 Python 接口和原生组件不再提供，输入数据由上层应用管理。调参工具与示例位于源码仓库 `examples/`，不随 whl 安装。
 
-本次 0.2.6 的电机原生库使用当前源码重新编译，CMake 包仅导出 `f32c::f32c`。保留原有 C/C++ API 和配置布局，新增可检查结果的关闭接口；Python `close()` 现在会报告清理失败。每次串口写入增加 100 ms 截止时间，失能失败保留待清理状态，UI 移除持久置零入口。SDK 默认 PI 与 0.2.4 相同。轮子不包含 UI，UI 修正需更新源码仓库；仅安装 wheel 不会取得 UI 的反馈保护。
+0.3.0 新增同步 `HeadController`：统一使用 `HeadTracker` 生成参考，并负责反馈读取、参考超前限制、误差/无进展/保持振荡保护和故障清理。UI 和集成应用调用同一入口，无后台线程。原有 `Gimbal2Dof` 和纯软件 `HeadTracker` 保持可用；低层 API 不自动加入控制策略。默认 PI 不变。本版本仅完成离线验收，尚未新增真机验收。
 
-## 2. 现场方向、边界与控制语义
+## 2. 现场方向、目标与控制语义
 
-本设备当前零位由用户手动调整：
+零位由用户手动写入，SDK 不自动标定。yaw 增大为第一人称向左；pitch 增大为低头。上游 Quest 角度的反号、比例、身份和授权由集成应用负责。
 
-| 关节 | 增大角度 | 减小角度 | 现场边界 |
-| --- | --- | --- | --- |
-| yaw，默认 ID=1 | 第一人称向左 | 第一人称向右 | 无已知机械限位；负载线缆可能增加阻力 |
-| pitch，默认 ID=2 | 低头 | 抬头 | 低头极限约 43°；正常抬头范围未发现限位 |
+`HeadController` 将**新期望 pitch 目标**截断到 +45°（配置的目标上限更小时采用较小值），没有 40°/43°反馈故障边界。初始实测即使超过 45°，也按实测保持，不因此失能、不强制拉回、不改零位；明确要求回零时从实测生成向内轨迹，其初始中间参考可能仍大于 45°。整定工具的自动试验计划要求位置及阶跃均不超过 45°，避免把截断后的动作记成原计划通过；这不用于诊断反馈角度。
 
-SDK 保留电机原始方向，不自动换符号或加零位偏置。这些方向是本机安装约定，不适用于所有安装。若上游 pitch 向上为正，需要在调用方反号映射。
+低层 `Gimbal2Dof.set_deg()` 仍立即下发，不裁剪到 45°或生成轨迹。单圈角度按协议 0.1°分辨率量化并对 360°取模。低层 `read()` 保留原始反馈；`HeadController` 将其转换到有符号坐标。两轴在同一串口串行读写，不是同步采样。同一控制实例由一个线程串行访问。
 
-单圈目标以 0.1° 为协议分辨率，按当前实现截断量化并对 360° 取模；例如 -10° 与 350° 指向同一位置。电机选择单圈最短路径。`read()` 保留电机反馈值，不转成 ±180°；需要有符号显示时可用 `(value + 180) % 360 - 180`。
+### 2.1 控制职责
 
-`set_deg()` 立即下发目标，不生成轨迹，也不校验本机 43° 机械边界或限制 yaw 在 ±60°；角度数值超过 60° 本身不会使 SDK 自动失能。连续运动应由调用方生成中间目标，并保证整条路径避开极限。调参工具的 pitch 测试目标上限为 40°，包含测试位置和正负阶跃，留出 3° 余量；该保护不是 SDK 全局限位。
-
-两轴共用一条串口，命令和反馈按轴串行处理，不是同步更新/采样。同一个实例应由一个线程串行访问。串口写成功只代表写入成功，协议没有命令 ACK；不得把它等同于到位、PI 已被反馈验证或成功持久保存。
-
-### 2.1 冻结的功能范围与宿主职责
-
-本版功能范围为同步双轴电机命令/反馈、使能/失能、显式启动目标、运行时 PI，以及可配置的 `HeadTracker` 目标生成器。PI 继续按实测工况整定。已记录的两轮 pitch=0°、yaw 0°→+60°→−60°→0°通过；其它姿态和异常路径必须分别验收，不能把这份记录推广到全部安装与负载。
-
-`HeadTracker` 处理输入目标、范围、速度、加速度、输入超时和控制周期停顿，输出的是参考目标。它不持续读取电机角度，不提供 UI 的参考超前限制、跟随误差、停滞或保持振荡监测。宿主需要读取反馈并接入这些保护，或自行实现对应策略。
-
-| 必须由宿主提供或确认的项 | 接入位置 / 责任 |
+| 模块 | 职责 |
 | --- | --- |
-| 本机零位、轴方向和传感器映射 | 调用方将输入转换到电机坐标；SDK 不自动换符号或补零位。持久置零属于独立标定，需暂停目标生产，置零后回读并重建轨迹及历史 |
-| yaw/pitch 工作范围、机械边界及余量 | `TrackingConfig.yaw_limits/pitch_limits`；底层 setter 无机械范围限制。UI 的 yaw ±60°、pitch ≤40°是本机约定，不能直接用于另一台机器 |
-| 参考最高速度、加速度 | `TrackingConfig.max_speed_deg_s/max_accel_deg_s2`；固件速度/加速度由 `Config.travel_rpm/accel` 设置，二者单位和作用不同 |
-| 输入目标失联与控制周期上限 | `TrackingConfig.stale_after_s/max_gap_s`；输入超时制动不会自动发送失能 |
-| 电机反馈超时和最大允许年龄 | 宿主单独配置并记录反馈取得时间，读失败或过期时停止目标推进并请求失能；这不是 `TrackingConfig` 的字段，SDK 没有常驻反馈 watchdog |
-| 参考超前、误差、无进展和振荡阈值 | 宿主将实际反馈与下发参考比较；`examples/ui.py` 的 9°等待、运动误差最高12°、静止3°及停滞/摆幅检查仅在该 UI 运行时生效 |
-| 限流与最终断能 | 电机驱动/固件及外部供电保护承担，整机集成方负责确认有效设置。SDK/UI 无电流或力矩反馈/控制接口，也不能验证当前固件限流值；串口失能请求发不出时需要整机硬件断能措施 |
+| `Gimbal2Dof` / C++ / C | 原始串口协议、PI、命令、两轴反馈、有界写入及关闭 |
+| `HeadTracker` | 无 I/O 的滤波、速度/加速度轨迹、量化滞环 |
+| `HeadController` | 组合以上两层；持续反馈、目标裁剪、发送权限复核、反馈保护、显式回零/到位、故障清理 |
+| 集成应用 | 输入源及时间戳、Quest 身份/授权、设备进程锁、操作员确认和恢复、调用周期 |
+| 固件与供电 | 电流/力矩限制及最终断能；SDK 没有电流控制或物理停止确认接口 |
 
-### 2.2 写入和关闭的故障语义
+### 2.2 写入和关闭
 
-单次 `write_all()` 使用单调时钟的 100 ms 总截止时间，覆盖持续 `EAGAIN`、`EINTR`、零字节写入和短写后阻塞；重试及部分进展不重置截止时间。失败返回到上层，公开 SDK 操作返回 `false/0` 或抛 `F32CError`，开启串口日志时记录 `TX_ERROR` 和已写字节数。
+普通命令写入使用 100 ms 单调时钟总截止时间，覆盖短写、EINTR/EAGAIN 和零写，不因部分进展重置。失败向上报告；成功只表示串口写入，没有命令 ACK。原有命令后 8 ms 间隔保留，不宣称整轮稳定 50 Hz。
 
-`disable()` 无论一个轴是否失败，都会尝试另一轴。失败后暂停位置/PI 下发，保留待清理标记和硬件状态未知；后续成功反馈不清掉该标记。关闭会再次尝试待清理请求，失败仍释放串口并报告结果。请求写成功只代表请求已发送，不代表电机已停止；成功发送后也没有物理失能 ACK。
+`disable()` 尝试两轴，失败保留待清理状态并停止位置/PI 下发。C/C++/Python 的关闭现在都仅对本实例已使能或待清理状态发送一轮两轴失能请求，再释放串口；被动 open/read/close 不发送失能。单轮关闭串口写入等待预算至多 216 ms，另有调度及日志开销，不是实时急停保证。之前显式失能失败时，关闭会再尝试这一轮。
 
-C++ `close_checked()` 在本实例已使能或待清理时发送一轮两轴失能请求；串口等待预算至多 `2 × (100 + 8) = 216 ms`。C 的 `f32c_close_checked()`（Python `close()`、UI 关闭使用它）保留原 C 关闭行为：先请求两轴失能，失败时通过 C++ 关闭再试一轮，最多四帧、串口等待预算 432 ms。不无限重试。上述预算不含操作系统调度、日志文件 I/O 等耗时，不是实时硬件急停保证。C++ 只读且从未使能的实例无需发送失能请求。
-
-关闭返回失败后，C 句柄已释放，Python 连接也已清空，禁止拿已释放句柄重试。应立即保存错误并由宿主处理硬件状态未知。C++ 对象保留待清理失败信息，关闭后的再次 `close_checked()` 仍返回失败。
+关闭失败仍释放句柄，错误必须立即记录，不能复用旧句柄。`HeadController` 保留故障和清理失败，清理失败后禁止仅靠 reset 自动恢复。请求发送成功也不等于硬件已经停止。
 
 ## 3. Python 配置与数据类型
 
@@ -68,7 +51,7 @@ with Gimbal2Dof(Config(device="/dev/ttyACM0")) as motor:
     print(motor.read())
 ```
 
-此例不使能、不下发位置；退出时 Python `close()` 仍会尝试发送失能命令。不要与另一个控制进程同时占用该总线。
+此例不使能、不下发位置；退出时不发送失能命令。不要与另一个控制进程同时占用该总线。
 
 ### Config
 
@@ -86,7 +69,7 @@ with Gimbal2Dof(Config(device="/dev/ttyACM0")) as motor:
 | `pitch_speed_kp`, `pitch_speed_ki` | `30`, `8` | pitch 速度环 PI，整数 0～256 |
 | `pitch_pos_kp`, `pitch_pos_ki` | `60`, `0` | pitch 位置环 PI，整数 0～256 |
 
-0.2.2 的高增益组合在实际 UI 使能时振荡，已撤回。0.2.6 沿用 0.2.4 的参数：yaw 速度 PI=50/16、位置 PI=63/0，pitch 速度 PI=30/8、位置 PI=60/0。UI 采用最高 120°/s、最大加速度 600°/s² 的 `HeadTracker` 轨迹，在接近目标时减速。0.2.5 增加按实际反馈暂停参考推进的处理，通过两轮 pitch=0° 时 yaw 的 0°→+60°→−60°→0° 实机动作，以及每 0.2 秒改一次 yaw 目标的连续拖动模拟；固定保持末段两轴峰峰值最大约 0.1°、均值误差绝对值最大约 0.1°。此前 yaw/pitch ±15° 双向切换末段峰峰值最大约 0.4°。这些记录不代表所有 pitch 姿态、外力、相机并行和重新上电均已验证。0.2.6 的故障路径检查为无硬件测试，不新增实机姿态验收。`set_pi()` 更新当前实例，不修改全局默认值。
+0.2.2 的高增益组合在实际 UI 使能时振荡，已撤回。0.3.0 沿用 0.2.4 的参数：yaw 速度 PI=50/16、位置 PI=63/0，pitch 速度 PI=30/8、位置 PI=60/0。UI 采用最高 120°/s、最大加速度 600°/s² 的 `HeadTracker` 轨迹，在接近目标时减速。0.2.5 增加按实际反馈暂停参考推进的处理，通过两轮 pitch=0° 时 yaw 的 0°→+60°→−60°→0° 实机动作，以及每 0.2 秒改一次 yaw 目标的连续拖动模拟；固定保持末段两轴峰峰值最大约 0.1°、均值误差绝对值最大约 0.1°。此前 yaw/pitch ±15° 双向切换末段峰峰值最大约 0.4°。这些记录不代表所有 pitch 姿态、外力、相机并行和重新上电均已验证。0.3.0 的故障路径检查为无硬件测试，不新增实机姿态验收。`set_pi()` 更新当前实例，不修改全局默认值。
 
 ### 参数设置方式
 
@@ -118,7 +101,7 @@ motor = Gimbal2Dof(motor_config)  # 此处不打开串口、不使能。
 | `State` | 不可变数据类：`yaw_deg: float`、`pitch_deg: float`，来自角度反馈，单位度 |
 | `F32CError` | 库加载、连接或原生操作失败时的异常，继承 `RuntimeError` |
 
-0.2.3 的 `enable()` 在使能前查询保持位置，先向两轴发送失能和完整 PI 配置，再逐轴执行使能→单圈直通模式→速度→初始目标→加速度，避免在已使能期间逐项初始化 PI。参数写入没有 ACK，不能将下发视作回读验证。`enable_at()` 指定初始目标，已经使能时直接更新目标；普通 SDK 不自动回零或执行本装置的 40° 边界。
+0.2.3 的 `enable()` 在使能前查询保持位置，先向两轴发送失能和完整 PI 配置，再逐轴执行使能→单圈直通模式→速度→初始目标→加速度，避免在已使能期间逐项初始化 PI。参数写入没有 ACK，不能将下发视作回读验证。`enable_at()` 指定初始目标，已经使能时直接更新目标；低层 SDK 不自动回零或执行本装置的目标上限。
 
 ## 4. Python 电机 API
 
@@ -127,12 +110,12 @@ motor = Gimbal2Dof(motor_config)  # 此处不打开串口、不使能。
 | 函数 / 签名 | 参数 | 返回值与行为 |
 | --- | --- | --- |
 | `open() -> Gimbal2Dof` | 无 | 连接并检测两轴，返回自身；已打开则直接返回；失败抛 `F32CError` |
-| `close() -> None` | 无 | 0.2.6 使用可检查的关闭；完成清理后返回，清理失败抛 `F32CError`，同时仍释放句柄；重复关闭已关闭对象无操作 |
+| `close() -> None` | 无 | 0.3.0 使用可检查的关闭；完成清理后返回，清理失败抛 `F32CError`，同时仍释放句柄；重复关闭已关闭对象无操作 |
 | `ping() -> bool` | 无 | 查询两轴是否回应；查询失败返回 `False`，可读 `last_error()`；未打开则抛异常 |
 | `enable() -> None` | 无 | 使能两轴，选择单圈直通模式，应用实例配置并保持当前角度；不自动回零；已使能时不重复初始化 |
 | `enable_at(yaw_deg: float, pitch_deg: float) -> None` | 两个有限角度，单位度 | 0.2.1 新增。0.2.3 先失能下发 PI，再使能并锁定这两个初始目标；目标立即下发，不平滑、不限制机械范围。已经使能时相当于 `set_deg()`，不重复初始化；无效角度抛 `F32CError` |
 | `disable() -> None` | 无 | 尝试两轴失能；失败抛 `F32CError` 并保留待清理状态、暂停位置/PI 下发；关闭时继续清理。写成功不代表收到电机确认 |
-| `read() -> State` | 无 | 串行读取两轴角度；任一轴失败则抛异常，不返回部分有效 State |
+| `read(*, timeout_s=None) -> State` | 省略时两轴总等待预算 100 ms；显式值 0 < timeout_s ≤ 1 | 两轴共用截止时间，任一轴失败不返回部分 State；预算包含查询写入和重试，另有帧间隔及调度开销 |
 | `set_deg(yaw_deg: float, pitch_deg: float) -> None` | 两个有限角度，单位度 | 依次下发 yaw、pitch；要求已使能；不平滑、不限机械角度 |
 | `set_yaw_deg(deg: float) -> None` | 有限角度 | 只下发 yaw 目标；要求已使能 |
 | `set_pitch_deg(deg: float) -> None` | 有限角度 | 只下发 pitch 目标；要求已使能 |
@@ -244,45 +227,29 @@ tracker = HeadTracker(motor.read(), settings)
 
 典型集成方式如下。调用方提供标定范围和头部角度来源；`latest_head_angles()` 是应用提供的非阻塞函数，仅在有**新样本**时返回映射后的 `(yaw, pitch)`，否则返回 `None`，不应积压旧姿态。反复把同一旧样本当作新样本提交，会使超时检测失效。
 
+### 4.2 推荐硬件入口：HeadController
+
 ```python
 import time
-from f32c import Config, Gimbal2Dof, HeadTracker, TrackingConfig
+from f32c import Config, HeadController, TrackingConfig
 
-
-def follow_head(motor_config, yaw_limits, pitch_limits,
-                latest_head_angles, should_run):
-    """应由应用在完成使能确认后、同一个执行线程中调用。"""
-    settings = TrackingConfig(yaw_limits=yaw_limits, pitch_limits=pitch_limits)
-    motor = Gimbal2Dof(motor_config).open()
-    try:
-        motor.enable()  # 应用初始 PI；保持当前姿态，不回零。
-        tracker = HeadTracker(motor.read(), settings)  # 用实测反馈初始化。
-        last_sent = None
-        while should_run():
-            started = time.monotonic()
-            angles = latest_head_angles()
-            if angles is not None:
-                tracker.set_target(*angles, timestamp=started)
-            command = tracker.step(timestamp=started)
-            if command != last_sent:
-                motor.set_deg(command.yaw_deg, command.pitch_deg)
-                last_sent = command
-            time.sleep(max(0, 0.02 - (time.monotonic() - started)))
-    finally:
-        # 失败由调用方处理；关闭连接仍由同一个线程执行。
-        try:
-            motor.disable()
-        finally:
-            motor.close()
-
-
-# 应用调用形式（这些角度范围与回调必须由应用提供）：
-# follow_head(Config(device="/dev/ttyACM0"),
-#             calibrated_yaw_limits, calibrated_pitch_limits,
-#             latest_head_angles, should_run)
+with HeadController(Config(device="/dev/ttyACM0"),
+                    TrackingConfig(pitch_limits=(-180, 45))) as head:
+    # 仅在应用已取得操作员使能许可后调用。
+    head.enable()                 # 从实测保持；没有自动回零。
+    head.move_to(0, 0)            # 可选、显式回到已有零位；不写零点。
+    while head.phase == "moving":
+        snapshot = head.tick()   # 以实测到位并稳定 0.5 s 判断完成。
+        time.sleep(1 / 30)
 ```
 
-输入丢失时仍需继续 `step()` 才能制动。电机反馈查询、输入采集和网络等待不能随意阻塞这个循环；生成器不会消除底层串口的阻塞，也不会判断电机是否真正到位。上例的 20 ms 是计划周期；实际周期包含串口耗时，不能视为实时保证。`F32CError`（通信）、`TrackingError`（控制间隔超过 `max_gap_s`）或 `ValueError`（目标/时间无效）会退出上例并执行清理，调用方应捕获并报告；不要在循环里直接吞掉异常并继续发送。恢复时从新反馈 `reset()`，避免沿用预测位置。
+跟随模式仅在收到**新输入**时调用 `head.set_target(yaw, pitch, received_at=接收时单调时钟)`；持续调用 `head.tick(may_send=权限回调)`，回调必须无副作用、快速返回。SDK 在反馈之后及每轴发送前复核许可，撤销时停止新目标输出，不发送额外制动轨迹。`head.hold()` 同样停止新参考，仍读取反馈和检查误差。失联恢复应由宿主确认身份/授权，再提交新样本，轨迹从新反馈建立。
+
+`set_target` 不得重复使用旧包来刷新时间；未来或倒退时间戳拒绝，过期输入进入 HOLD。`move_to` 是独立点到点动作，不受网络输入过期影响。`set_motion_limits(speed, accel)` 更新软件轨迹约束。`snapshot` 包含 phase、enabled、measured、command、target、feedback_age_s、reason 和 following_limited。command 仅表示成功写出的参考，measured 才表示事实。
+
+`ProtectionConfig` 默认：每 tick 反馈等待预算 40 ms、最大反馈年龄 100 ms；参考超前 9°等待，运动误差上限 12°，静止上限 3°，最近 0.5 s 的命令速度决定运动余量；持续 1.5 s 误差超过 6°且实测变化 ≤0.3°报无进展；固定保持窗口摆幅 >1°报振荡。点到点动作默认 15 s 截止、实测及参考都接近目标并连续稳定 0.5 s 才结束。一次短暂读失败暂停推进，反馈过期则故障；活跃目标期间控制间隔超过 `max_gap_s` 同样故障。
+
+`HeadControlError` 包含 reason、snapshot 和 cleanup_error；故障停止推进并尝试失能，不自动重新使能。成功清理后需显式 `reset_fault()` 才能再次 enable；关闭失败按硬件状态未知处理。宿主仍应在同一所有权锁内关闭对象并保存错误，不以 enabled=False 推断物理失能。
 
 只安装 whl、没有电机也可以运行下面的纯软件示例；其中范围仅用于模拟：
 
@@ -329,12 +296,12 @@ target_link_libraries(your_app PRIVATE f32c::f32c)
 | --- | --- |
 | `open()` | `bool`；显式路径只打开串口，自动扫描时检查两轴回应；需用 `ping()` 检测显式路径的两轴 |
 | `close()` | 保留 `void`；调用 `close_checked()`，失败向 stderr 报告，并保留 `last_error()` |
-| `close_checked()` | 0.2.6 新增 `bool`；清理已使能/待清理状态后释放串口，即使失败也释放；失败返回 false 并保留未知状态。true 不等于电机已停止 |
+| `close_checked()` | 0.3.0 新增 `bool`；清理已使能/待清理状态后释放串口，即使失败也释放；失败返回 false 并保留未知状态。true 不等于电机已停止 |
 | `ping()`、`enable()`、`disable()` | `bool`；失败返回 `false`，从 `last_error()` 取原因 |
 | `enable_at(double yaw, double pitch)` | `bool`；显式启动目标，有限数校验，行为同 Python；失败从 `last_error()` 取原因 |
 | `set_deg(double yaw, double pitch)`、`set_yaw_deg(double)`、`set_pitch_deg(double)` | `bool`；角度语义同 Python |
 | `set_pi(unsigned axis, unsigned speed_kp, unsigned speed_ki, unsigned pos_kp, unsigned pos_ki)` | `bool`；`axis=0` 为 yaw，`axis=1` 为 pitch；校验轴和 0～256 范围，要求已使能；不修改模式或目标，不保存 |
-| `read(State* out)` | `bool`；`out` 不可为空。State 含 `ok`、`yaw_deg`、`pitch_deg`；仅返回 true 时整体有效 |
+| `read(State* out)` / `read_timeout(State* out, int timeout_ms)` | `bool`；`out` 不可为空。超时接口两轴共用 1～1000 ms 预算；State 含 `ok`、`yaw_deg`、`pitch_deg`；仅返回 true 时整体有效 |
 | `set_zero()` | `bool`；当前位置置零并持久保存，与 Python 一致 |
 | `start_log(const std::string& path)`、`stop_log()` | 前者返回 `bool`，后者 `void` |
 | `last_error() const` | `const std::string&`，引用属于对象；需要跨后续操作保存时复制文本 |
@@ -350,13 +317,13 @@ target_link_libraries(your_app PRIVATE f32c::f32c)
 | `f32c_open_config(const f32c_config* config)` | 返回已打开且两轴 ping 成功的句柄；失败返回 NULL；device 指针在调用期间有效即可 |
 | `f32c_open(const char* device, unsigned yaw_id, unsigned pitch_id)` | 简化打开入口，其余字段用默认配置；NULL/空 device 自动扫描；失败返回 NULL |
 | `f32c_close(f32c_gimbal* g)` | 保留 void，调用可检查关闭，失败向 stderr 报告并保留全局错误；NULL 无操作 |
-| `f32c_close_checked(f32c_gimbal* g)` | 0.2.6 新增；最多两轮两轴失能尝试并释放句柄，1=请求已发送，0=最终清理失败/硬件状态未知；NULL 返回1。失败用 `f32c_last_error(NULL)`；无论返回值均不能再使用旧句柄 |
+| `f32c_close_checked(f32c_gimbal* g)` | 0.3.0 新增；本实例使能/待清理时一轮两轴失能尝试并释放句柄，1=请求已发送，0=最终清理失败/硬件状态未知；NULL 返回1。失败用 `f32c_last_error(NULL)`；无论返回值均不能再使用旧句柄 |
 | `f32c_ping(g)`、`f32c_enable(g)`、`f32c_disable(g)` | 与 C++ 对应 |
 | `f32c_enable_at(g, double yaw, double pitch)` | 返回 1/0；显式启动目标，语义同 C++；NULL 句柄返回 0 |
 | `f32c_set_deg(g, double yaw, double pitch)` | 两轴单圈目标 |
 | `f32c_set_yaw_deg(g, double deg)`、`f32c_set_pitch_deg(g, double deg)` | 单轴目标 |
 | `f32c_set_pi(g, unsigned axis, unsigned speed_kp, unsigned speed_ki, unsigned pos_kp, unsigned pos_ki)` | 运行时 PI；轴为 0/1，校验四个 unsigned 值均 ≤256，避免窄整型截断 |
-| `f32c_read(g, double* yaw, double* pitch)` | 输出指针不可为空；仅返回 1 时同时使用两轴数据 |
+| `f32c_read(g, double* yaw, double* pitch)` / `f32c_read_timeout(g, yaw, pitch, unsigned timeout_ms)` | 输出指针不可为空；仅返回 1 时同时使用两轴数据 |
 | `f32c_set_zero(g)` | 两轴当前位置置零并保存 |
 | `f32c_start_log(g, const char* path)`、`f32c_stop_log(g)` | 前者返回 1/0，后者 void |
 | `f32c_last_error(const f32c_gimbal* g)` | 返回 SDK 拥有的错误字符串，不应 free；打开/关闭失败后传 NULL 查询当前线程的最近全局错误；后续操作前应复制 |
@@ -382,20 +349,16 @@ python3 examples/autotune.py --device /dev/ttyACM0 --center 0 0
 python3 examples/autotune.py --device /dev/ttyACM0 --center 0 0 --enable
 ```
 
-整轮试验只使能一次，通过 `set_pi()` 更新候选，保持其它参数及目标控制；结束或异常时尝试失能。输出根目录含 `run.json`、整轮 `serial.log`；每个候选含 `samples.csv` 和 `result.json`。仅完整验证通过时 `recommendation` 才非空。`--center`、`--validation-offsets`、`--step` 定义测试范围；所有位置和阶跃在使能前检查 pitch ≤40°，不把越界目标裁剪后当作测试通过。大跟随误差、持续无进展或 pitch 越界会中止。
+整轮试验只使能一次，通过 `set_pi()` 更新候选，保持其它参数及目标控制；结束或异常时尝试失能。输出根目录含 `run.json`、整轮 `serial.log`；每个候选含 `samples.csv` 和 `result.json`。仅完整验证通过时 `recommendation` 才非空。`--center`、`--validation-offsets`、`--step` 定义测试范围；所有位置和阶跃在使能前检查 pitch ≤45°，不把越界目标裁剪后当作测试通过。大跟随误差、持续无进展会中止。
 
 人工受扰记录可用 `examples/tune.py` 的 `hold/push/release/report` 命令，详见仓库 readme。自动试验使用目标阶跃，不等同于真实外力冲击；无力传感器时不能给出 Nm/rad 的绝对刚度。线缆阻力可作为现有负载参与整定，实体极限不能用更高 PI 强推。
 
-UI 保留使能后回到已有 0° 并保持，默认最高速度 120°/s、加速度 600°/s²，使用 SDK 的 `HeadTracker` 生成连续加减速目标。yaw 滑条按用户指定使用范围限制在 −60°～60°，pitch 为 −180°～40°；通过 UI 设置超出范围的滑条数值会裁剪到端点，不因该输入直接失能。如果启动 yaw 已在 ±60° 之外，允许从该实测姿态向内回零，进入范围后收紧轨迹边界。SDK 底层 API 不沿用此 UI 范围。
-
-当下一步目标会使同向跟随误差超过 9° 时，UI 保持上次下发目标并重建轨迹，等实测追上再继续；反向拖动可立即调整目标。这时电机仍保持使能。运动误差保护为 `3 + min(9, 0.12 × 最近0.5秒内最高实际下发速度)` 度，最高 12°；等待跟随期间保留 12°上限，实测误差小于 3°后解除等待，普通运动停止 0.5 秒后恢复 3°上限。若任一轴持续 1.5 秒误差超过 6°，实测位置变化不超过 0.3°，仍请求失能，避免持续推动不动的负载。到位监测避开初始收敛，进入 ±0.5°或最长等待 1 秒后，用 1 秒窗口检查超过 1°摆幅。
-
-启动前自动开启 Log，轨迹从初始下发目标建立。UI 20 ms 计划周期查询反馈，实际周期包含串口/界面耗时。故障时在串口日志旁写入同名 `.fault.json`，记录原因、实际反馈、下发目标、最新期望目标、等待跟随的轴和失能请求结果。关闭时追加 `.close.json` 记录最终清理结果，失败同时写 stderr。UI `armed=False` 表示停止目标下发，不表示硬件已停止；界面明确显示请求已发送/硬件未确认或失败/硬件未知。通信/发送错误、反馈越界、跟随误差超限、持续无进展、保持振荡或控制周期超过 `HeadTracker.max_gap_s` 等均请求失能；保护不等于物理急停。UI 已移除“当前设为零点”，保留“到 0°”移动到已有零位。本次不保存 PI 或改零点。
+UI 的“使能并回0°”使用 `HeadController.enable()` 后显式 `move_to(0,0)`，滑条/到 0°均走同一入口。计划周期约 33 ms，实际包含串口和界面耗时；yaw 滑条 ±60°，pitch −180°～45°。UI 仅展示状态并记录 `.fault.json` / `.close.json`，没有第二份滤波、误差保护或电机 ctypes 绑定。相机仍是独立可选组件。
 
 ```bash
 F32C_PYTHON=/usr/bin/python3 ./package_sdk.sh
 ```
 
-打包会重新编译电机库、运行四个 C++ 测试（含阻塞写入/失能失败注入）和 Python SDK 检查、伪终端 PI/跟随集成测试、14 个调参测试及 17 个跟随测试，然后生成平台 whl 并同步 `wheel/SDK使用说明.md`。UI 另用已安装 PySide6 的 Python 运行 `tests/test_ui_defaults.py`，覆盖关闭失败报告及无置零入口。构建机器需要 CMake、支持 C++17 的编译器和带 pip、setuptools、wheel 的 Python。跨平台需在目标平台重新构建。旧版本的原生库复用路径已移除，0.2.0 从源码构建电机库。
+打包会重新编译电机库、运行四个 C++ 测试（含阻塞写入/失能失败注入）和 Python SDK 检查、伪终端 PI/跟随集成测试、调参、纯跟随、HeadController 和分片/噪声伪串口测试，然后生成平台 whl 并同步 `wheel/SDK使用说明.md`。UI 另用已安装 PySide6 的 Python 运行 `tests/test_ui_defaults.py`，覆盖关闭失败报告及无置零入口。构建机器需要 CMake、支持 C++17 的编译器和带 pip、setuptools、wheel 的 Python。跨平台需在目标平台重新构建。旧版本的原生库复用路径已移除，0.2.0 从源码构建电机库。
 
 打包过程中还会验证 whl 的文件清单、校验值、Python 模块及配套说明，确保仅发布电机组件。构建缓存、原始现场日志及本机配置不提交 Git；新 whl 与配套说明存放在 `wheel/`。

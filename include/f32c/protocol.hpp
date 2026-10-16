@@ -32,11 +32,7 @@ inline int32_t be32s(const uint8_t* p) {
 }
 
 inline std::vector<uint8_t> pack(uint8_t addr, uint8_t func, const uint8_t* data, size_t n) {
-    std::vector<uint8_t> f;
-    f.reserve(n + 5);
-    f.push_back(kHead);
-    f.push_back(addr);
-    f.push_back(func);
+    std::vector<uint8_t> f{kHead, addr, func};
     if (n && data) f.insert(f.end(), data, data + n);
     f.push_back(bcc_of(f.data(), f.size()));
     f.push_back(kTail);
@@ -105,8 +101,11 @@ struct Frame {
 
 inline std::optional<Frame> parse_at(const uint8_t* buf, size_t n, size_t off, size_t* consumed) {
     static constexpr size_t kLens[] = {5, 6, 7, 9};
-    if (off >= n || buf[off] != kHead) return std::nullopt;
+    if (off >= n || n - off < 3 || buf[off] != kHead) return std::nullopt;
     for (size_t len : kLens) {
+        // Mechanical feedback and multi-turn commands both have four data bytes.
+        // A payload ending in 7B can otherwise look like a valid short frame.
+        if (buf[off + 2] == static_cast<uint8_t>(Feedback::MechAngleX10) && len != 9) continue;
         if (off + len > n) continue;
         if (buf[off + len - 1] != kTail) continue;
         if (bcc_of(buf + off, len - 2) != buf[off + len - 2]) continue;
@@ -116,6 +115,17 @@ inline std::optional<Frame> parse_at(const uint8_t* buf, size_t n, size_t off, s
         if (len > 5) f.data.assign(buf + off + 3, buf + off + len - 2);
         if (consumed) *consumed = off + len;
         return f;
+    }
+    return std::nullopt;
+}
+
+inline std::optional<Frame> find_mech_feedback(const uint8_t* buf, size_t n, uint8_t addr) {
+    for (size_t i = 0; i + 9 <= n; ++i) {
+        if (buf[i] != kHead || buf[i + 1] != addr ||
+            buf[i + 2] != static_cast<uint8_t>(Feedback::MechAngleX10) ||
+            buf[i + 8] != kTail || bcc_of(buf + i, 7) != buf[i + 7]) continue;
+        return Frame{addr, static_cast<uint8_t>(Feedback::MechAngleX10),
+                     std::vector<uint8_t>(buf + i + 3, buf + i + 7)};
     }
     return std::nullopt;
 }

@@ -20,7 +20,7 @@ python3 -c 'from f32c import HeadTracker, TrackingConfig, TrackingError; print("
 
 零位由用户手动写入，SDK 不自动标定。yaw 增大为第一人称向左；pitch 增大为低头。上游 Quest 角度的反号、比例、身份和授权由集成应用负责。
 
-`HeadController` 将**新期望 pitch 目标**截断到 +45°（配置的目标上限更小时采用较小值），没有 40°/43°反馈故障边界。初始实测即使超过 45°，也按实测保持，不因此失能、不强制拉回、不改零位；明确要求回零时从实测生成向内轨迹，其初始中间参考可能仍大于 45°。整定工具的自动试验计划要求位置及阶跃均不超过 45°，避免把截断后的动作记成原计划通过；这不用于诊断反馈角度。
+`HeadController` 将**新期望 pitch 目标**截断到 +45°（配置的目标上限更小时采用较小值），没有 40°/43°反馈故障边界。初始实测即使超过 45°，也保留实测坐标，不因此失能、不改零位；`HeadController.enable()` 默认从实测生成回零轨迹，持续调用 `tick()` 推进，其初始中间参考可能仍大于 45°。整定工具的自动试验计划要求位置及阶跃均不超过 45°，避免把截断后的动作记成原计划通过；这不用于诊断反馈角度。
 
 低层 `Gimbal2Dof.set_deg()` 仍立即下发，不裁剪到 45°或生成轨迹。单圈角度按协议 0.1°分辨率量化并对 360°取模。低层 `read()` 保留原始反馈；`HeadController` 将其转换到有符号坐标。两轴在同一串口串行读写，不是同步采样。同一控制实例由一个线程串行访问。
 
@@ -236,8 +236,7 @@ from f32c import Config, HeadController, TrackingConfig
 with HeadController(Config(device="/dev/ttyACM0"),
                     TrackingConfig(pitch_limits=(-180, 45))) as head:
     # 仅在应用已取得操作员使能许可后调用。
-    head.enable()                 # 从实测保持；没有自动回零。
-    head.move_to(0, 0)            # 可选、显式回到已有零位；不写零点。
+    head.enable()                 # 默认从实测位置启动回零；不写零点。
     while head.phase == "moving":
         snapshot = head.tick()   # 以实测到位并稳定 0.5 s 判断完成。
         time.sleep(1 / 30)
@@ -353,7 +352,7 @@ python3 examples/autotune.py --device /dev/ttyACM0 --center 0 0 --enable
 
 人工受扰记录可用 `examples/tune.py` 的 `hold/push/release/report` 命令，详见仓库 readme。自动试验使用目标阶跃，不等同于真实外力冲击；无力传感器时不能给出 Nm/rad 的绝对刚度。线缆阻力可作为现有负载参与整定，实体极限不能用更高 PI 强推。
 
-UI 的“使能并回0°”使用 `HeadController.enable()` 后显式 `move_to(0,0)`，滑条/到 0°均走同一入口。计划周期约 33 ms，实际包含串口和界面耗时；yaw 滑条 ±60°，pitch −180°～45°。UI 仅展示状态并记录 `.fault.json` / `.close.json`，没有第二份滤波、误差保护或电机 ctypes 绑定。相机仍是独立可选组件。
+UI 的“使能并回0°”使用 `HeadController.enable()` 的默认回零行为，滑条/到 0°调用 `move_to()`，共用同一轨迹和保护。计划周期约 33 ms，实际包含串口和界面耗时；yaw 滑条 ±60°，pitch −180°～45°。UI 仅展示状态并记录 `.fault.json` / `.close.json`，没有第二份滤波、误差保护或电机 ctypes 绑定。相机仍是独立可选组件。
 
 ```bash
 F32C_PYTHON=/usr/bin/python3 ./package_sdk.sh

@@ -286,7 +286,8 @@ class Panel(QWidget):
             if self.head.phase == "fault":
                 self.head.reset_fault()  # This button is the explicit operator action.
             self.show_state(self.head.enable())
-            self.go_zero()
+            self.yaw.set_deg(0)
+            self.pitch.set_deg(0)
         except F32CError as exc:
             self.fault(str(exc))
             QMessageBox.critical(self, "F32C", str(exc))

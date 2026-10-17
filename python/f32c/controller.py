@@ -80,7 +80,7 @@ class HeadController:
 
     New pitch targets saturate at +45 degrees (or a smaller configured target
     limit). Feedback has no head-down boundary. An initial pose outside the
-    target range is held as measured, and is a valid starting point for an
+    target range is retained as measured, and is a valid starting point for an
     inward trajectory; its coordinates and persistent zero are never changed.
     """
 
@@ -141,6 +141,7 @@ class HeadController:
         self.motor.stop_log()
 
     def enable(self) -> ControlSnapshot:
+        """Enable at the measured pose, then return to zero as tick() advances."""
         if self.phase == "fault":
             raise F32CError("reset the controller fault explicitly before enabling")
         if self.enabled:
@@ -167,6 +168,7 @@ class HeadController:
         self._limited.clear()
         for samples in self._motion.values():
             samples.clear()
+        self.move_to(0, 0)
         return self.snapshot
 
     def _require_enabled(self):

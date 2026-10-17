@@ -70,17 +70,22 @@ class ControllerTests(unittest.TestCase):
         head = self.controller(State(359.9, 45.2))
         self.assertAlmostEqual(head.snapshot.measured.yaw_deg, -.1)
         self.assertAlmostEqual(head.snapshot.command.pitch_deg, 45.2)
-        self.tick()
         self.assertFalse(self.motor.sent)
+        self.tick()
+        self.assertTrue(all(v <= 45.2 for a, v in self.motor.sent if a == "pitch"))
         head.set_target(0, 80)
         self.assertEqual(head.snapshot.target.pitch_deg, 45)
         for _ in range(5): self.tick()
         self.assertTrue(head.enabled)
         self.assertTrue(all(v <= 45.2 for a, v in self.motor.sent if a == "pitch"))
 
-    def test_zero_uses_feedback_and_does_not_expire_like_a_source_sample(self):
+    def test_enable_returns_to_zero_using_feedback_and_repeated_enable_keeps_target(self):
         head = self.controller(State(7, 45.2))
-        head.move_to(0, 0)
+        self.assertEqual(head.snapshot.phase, "moving")
+        self.assertEqual(head.snapshot.target, State(0, 0))
+        self.assertAlmostEqual(head.snapshot.command.yaw_deg, 7)
+        self.assertAlmostEqual(head.snapshot.command.pitch_deg, 45.2)
+        self.assertFalse(self.motor.sent)
         for _ in range(500):
             status = self.tick()
             if status.reason == "target_reached": break
@@ -89,6 +94,8 @@ class ControllerTests(unittest.TestCase):
         self.assertLessEqual(abs(status.measured.pitch_deg), 1)
         self.assertGreater(self.motor.reads, 40)
         self.assertEqual(self.motor.disables, 0)
+        head.move_to(5, 10)
+        self.assertEqual(head.enable().target, State(5, 10))
 
     def test_new_goal_after_hold_does_not_inherit_inactive_control_gap(self):
         head = self.controller()
@@ -192,6 +199,7 @@ class ControllerTests(unittest.TestCase):
 
     def test_holding_oscillation_is_still_monitored(self):
         head = self.controller()
+        head.hold()
         self.motor.follow = False
         self.tick()
         self.motor.position = State(-.7, 0)

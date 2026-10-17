@@ -170,9 +170,9 @@ class Panel(QWidget):
 
         motor_box = QGroupBox("两轴电机")
         motor_layout = QVBoxLayout(motor_box)
-        motor_layout.addWidget(QLabel("回零保持：yaw ±60°，pitch 目标截断到45°"))
+        motor_layout.addWidget(QLabel("默认保持 yaw 0° / pitch 35°；yaw ±60°，pitch 目标上限45°"))
         btn_row = QHBoxLayout()
-        self.btn_en = QPushButton("使能并回0°")
+        self.btn_en = QPushButton("使能并到保持位")
         self.btn_dis = QPushButton("失能")
         self.btn_home = QPushButton("到 0°")
         self.btn_en.clicked.connect(self.enable)
@@ -285,9 +285,10 @@ class Panel(QWidget):
         try:
             if self.head.phase == "fault":
                 self.head.reset_fault()  # This button is the explicit operator action.
-            self.show_state(self.head.enable())
-            self.yaw.set_deg(0)
-            self.pitch.set_deg(0)
+            state = self.head.enable()
+            self.show_state(state)
+            self.yaw.set_deg(state.target.yaw_deg)
+            self.pitch.set_deg(state.target.pitch_deg)
         except F32CError as exc:
             self.fault(str(exc))
             QMessageBox.critical(self, "F32C", str(exc))

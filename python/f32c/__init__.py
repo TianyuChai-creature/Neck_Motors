@@ -9,7 +9,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-__all__ = ["Config", "F32CError", "Gimbal2Dof", "State", "native_prefix",
+__all__ = ["Config", "F32CError", "Gimbal2Dof", "State", "DEFAULT_HOLD_POSITION", "native_prefix",
            "HeadTracker", "TrackingConfig", "TrackingError", "HeadController",
            "ProtectionConfig", "ControlSnapshot", "HeadControlError", "clip_pitch_target"]
 
@@ -30,10 +30,10 @@ class Config:
     yaw_speed_ki: int = 16
     yaw_pos_kp: int = 63
     yaw_pos_ki: int = 0
-    pitch_speed_kp: int = 30
+    pitch_speed_kp: int = 40
     pitch_speed_ki: int = 8
-    pitch_pos_kp: int = 60
-    pitch_pos_ki: int = 0
+    pitch_pos_kp: int = 70
+    pitch_pos_ki: int = 8
 
     def _validate(self) -> None:
         if self.device is not None and not isinstance(self.device, str):
@@ -57,6 +57,9 @@ class Config:
 class State:
     yaw_deg: float
     pitch_deg: float
+
+
+DEFAULT_HOLD_POSITION = State(0.0, 35.0)
 
 
 class _CConfig(C.Structure):

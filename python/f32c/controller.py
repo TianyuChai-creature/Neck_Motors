@@ -13,7 +13,7 @@ import math
 import time
 from typing import Callable
 
-from . import Config, F32CError, Gimbal2Dof, State
+from . import Config, DEFAULT_HOLD_POSITION, F32CError, Gimbal2Dof, State
 from .tracking import HeadTracker, TrackingConfig, TrackingError, _finite, _wrap
 
 
@@ -22,7 +22,7 @@ class ProtectionConfig:
     feedback_timeout_s: float = 0.04
     feedback_max_age_s: float = 0.1
     reference_lead_deg: float = 9.0
-    max_error_deg: float = 12.0
+    max_error_deg: float = 12.0  # Compatibility only; error magnitude no longer disables.
     stationary_error_deg: float = 3.0
     stall_after_s: float = 1.5
     stall_motion_deg: float = 0.3
@@ -37,8 +37,8 @@ class ProtectionConfig:
                 raise ValueError(f"{name} must be positive")
         if not self.feedback_timeout_s <= self.feedback_max_age_s <= 1:
             raise ValueError("feedback timeouts must satisfy 0 < timeout <= max_age <= 1")
-        if not self.stationary_error_deg < self.reference_lead_deg < self.max_error_deg:
-            raise ValueError("expected stationary_error < reference_lead < max_error")
+        if not self.stationary_error_deg < self.reference_lead_deg:
+            raise ValueError("expected stationary_error < reference_lead")
 
 
 @dataclass(frozen=True)
@@ -141,7 +141,7 @@ class HeadController:
         self.motor.stop_log()
 
     def enable(self) -> ControlSnapshot:
-        """Enable at the measured pose, then return to zero as tick() advances."""
+        """Enable at the measured pose, then approach (yaw=0, pitch=35) via tick()."""
         if self.phase == "fault":
             raise F32CError("reset the controller fault explicitly before enabling")
         if self.enabled:
@@ -168,7 +168,7 @@ class HeadController:
         self._limited.clear()
         for samples in self._motion.values():
             samples.clear()
-        self.move_to(0, 0)
+        self.move_to(DEFAULT_HOLD_POSITION.yaw_deg, DEFAULT_HOLD_POSITION.pitch_deg)
         return self.snapshot
 
     def _require_enabled(self):
@@ -248,17 +248,9 @@ class HeadController:
         for axis in tuple(self._limited):
             if abs(getattr(errors, axis + "_deg")) < self.protection.stationary_error_deg:
                 self._limited.remove(axis)
-        for axis, samples in self._motion.items():
+        for samples in self._motion.values():
             while samples and samples[0][0] < now - .5:
                 samples.popleft()
-            allowance = min(self.protection.max_error_deg, self.protection.stationary_error_deg +
-                            .12 * max((v for _, v in samples), default=0))
-            if axis in self._limited:
-                allowance = self.protection.max_error_deg
-            error = getattr(errors, axis + "_deg")
-            if abs(error) > allowance + 1e-9:
-                self._fault(f"tracking_error {axis}: measured={getattr(self._measured, axis + '_deg'):.3f}, "
-                            f"command={getattr(self._command, axis + '_deg'):.3f}, error={error:.3f}, allowance={allowance:.3f}")
         self._progress.append((now, self._measured, errors))
         while len(self._progress) > 1 and self._progress[1][0] <= now - self.protection.stall_after_s:
             self._progress.popleft()

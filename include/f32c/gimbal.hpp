@@ -20,10 +20,10 @@ public:
         uint16_t yaw_speed_ki = 16;
         uint16_t yaw_pos_kp = 63;
         uint16_t yaw_pos_ki = 0;
-        uint16_t pitch_speed_kp = 30;
+        uint16_t pitch_speed_kp = 40;
         uint16_t pitch_speed_ki = 8;
-        uint16_t pitch_pos_kp = 60;
-        uint16_t pitch_pos_ki = 0;
+        uint16_t pitch_pos_kp = 70;
+        uint16_t pitch_pos_ki = 8;
         Config() = default;
     };
 

@@ -79,10 +79,10 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(head.enabled)
         self.assertTrue(all(v <= 45.2 for a, v in self.motor.sent if a == "pitch"))
 
-    def test_enable_returns_to_zero_using_feedback_and_repeated_enable_keeps_target(self):
+    def test_enable_moves_to_hold_position_using_feedback_and_repeated_enable_keeps_target(self):
         head = self.controller(State(7, 45.2))
         self.assertEqual(head.snapshot.phase, "moving")
-        self.assertEqual(head.snapshot.target, State(0, 0))
+        self.assertEqual(head.snapshot.target, State(0, 35))
         self.assertAlmostEqual(head.snapshot.command.yaw_deg, 7)
         self.assertAlmostEqual(head.snapshot.command.pitch_deg, 45.2)
         self.assertFalse(self.motor.sent)
@@ -91,8 +91,8 @@ class ControllerTests(unittest.TestCase):
             if status.reason == "target_reached": break
         self.assertEqual(status.reason, "target_reached")
         self.assertEqual(status.phase, "hold")
-        self.assertLessEqual(abs(status.measured.pitch_deg), 1)
-        self.assertGreater(self.motor.reads, 40)
+        self.assertLessEqual(abs(status.measured.pitch_deg - 35), 1)
+        self.assertGreater(self.motor.reads, 20)
         self.assertEqual(self.motor.disables, 0)
         head.move_to(5, 10)
         self.assertEqual(head.enable().target, State(5, 10))
@@ -184,18 +184,30 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(caught.exception.snapshot.measured.pitch_deg, 39)
         self.assertEqual(self.motor.disables, 1)
 
-    def test_holding_does_not_immediately_drop_recent_motion_allowance(self):
+    def test_large_following_error_does_not_disable_but_no_progress_still_does(self):
         head = self.controller()
         head._command = self.motor.target = State(0, 0)
         self.motor.follow = False
-        self.motor.position = State(5, 0)
-        head._motion["yaw"].append((self.now, 30.))
+        self.motor.position = State(20, 20)
         head.hold()
-        self.tick()
+        for _ in range(40): self.tick()
         self.assertTrue(head.enabled)
-        # Keep ticking; the allowance tightens once actual command history expires.
-        with self.assertRaisesRegex(HeadControlError, "tracking_error yaw"):
-            for _ in range(30): self.tick()
+        self.assertEqual(self.motor.disables, 0)
+        self.assertFalse(self.motor.sent)
+        with self.assertRaisesRegex(HeadControlError, "no_progress"):
+            for _ in range(50): self.tick()
+        self.assertEqual(self.motor.disables, 1)
+
+    def test_large_error_still_pauses_reference_until_feedback_catches_up(self):
+        head = self.controller()
+        head.set_target(-60, -60)
+        self.tick()
+        self.motor.follow = False
+        self.motor.position = State(20, 20)
+        status = self.tick()
+        self.assertTrue(status.enabled)
+        self.assertEqual(set(status.following_limited), {"yaw", "pitch"})
+        self.assertFalse(self.motor.sent)
 
     def test_holding_oscillation_is_still_monitored(self):
         head = self.controller()

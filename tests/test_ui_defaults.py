@@ -58,7 +58,8 @@ class UiTests(unittest.TestCase):
         self.assertFalse(hasattr(self.panel, "set_zero"))
         self.panel.enable()
         self.assertAlmostEqual(self.head.snapshot.command.pitch_deg, 45.2)
-        self.assertEqual(self.head.snapshot.target, State(0, 0))
+        self.assertEqual(self.head.snapshot.target, State(0, 35))
+        self.assertEqual(self.panel.pitch.deg(), 35)
         self.assertFalse(self.motor.sent)
         for _ in range(500):
             self.now += .033

@@ -13,17 +13,17 @@ public:
         int baud = 115200;
         uint8_t id_yaw = 1;
         uint8_t id_pitch = 2;
-        int travel_rpm = 80;
-        uint16_t accel = 10;
-        // Current-load gains; yaw +/-60 passed at pitch=0, other postures need validation.
-        uint16_t yaw_speed_kp = 50;
-        uint16_t yaw_speed_ki = 16;
-        uint16_t yaw_pos_kp = 63;
+        int travel_rpm = 5;
+        uint16_t accel = 1;
+        // Bench profile: return-to-zero and short holds passed; continuous tracking needs validation.
+        uint16_t yaw_speed_kp = 40;
+        uint16_t yaw_speed_ki = 4;
+        uint16_t yaw_pos_kp = 42;
         uint16_t yaw_pos_ki = 0;
-        uint16_t pitch_speed_kp = 40;
-        uint16_t pitch_speed_ki = 8;
-        uint16_t pitch_pos_kp = 70;
-        uint16_t pitch_pos_ki = 8;
+        uint16_t pitch_speed_kp = 10;
+        uint16_t pitch_speed_ki = 4;
+        uint16_t pitch_pos_kp = 40;
+        uint16_t pitch_pos_ki = 0;
         Config() = default;
     };
 

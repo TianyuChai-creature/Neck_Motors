@@ -1,11 +1,11 @@
-# F32C Neck Motors SDK 0.3.1 使用说明
+# F32C Neck Motors SDK 0.3.2 使用说明
 
 ## 1. 发布内容与安装
 
-发布文件为 `wheel/f32c_neck_motors-0.3.1-py3-none-linux_x86_64.whl`，本说明同时复制至 `wheel/SDK使用说明.md`。轮子包含 Python 包 `f32c`（含 `HeadTracker`）、电机共享库 `libf32c.so`、电机 C/C++ 公开头文件、CMake 包配置和本说明。本 SDK 负责电机通信、参数设置和跟随目标生成。Python >=3.10；平台为 Linux x86_64，原生库需要兼容的 glibc/libstdc++。
+发布文件为 `wheel/f32c_neck_motors-0.3.2-py3-none-linux_x86_64.whl`，本说明同时复制至 `wheel/SDK使用说明.md`。轮子包含 Python 包 `f32c`（含 `HeadTracker`）、电机共享库 `libf32c.so`、电机 C/C++ 公开头文件、CMake 包配置和本说明。本 SDK 负责电机通信、参数设置和跟随目标生成。Python >=3.10；平台为 Linux x86_64，原生库需要兼容的 glibc/libstdc++。
 
 ```bash
-python3 -m pip install --upgrade wheel/f32c_neck_motors-0.3.1-py3-none-linux_x86_64.whl
+python3 -m pip install --upgrade wheel/f32c_neck_motors-0.3.2-py3-none-linux_x86_64.whl
 python3 -c 'import f32c; from importlib.metadata import version; print(version("f32c-neck-motors")); print(f32c.native_prefix())'
 python3 -c 'from f32c import HeadTracker, TrackingConfig, TrackingError; print("HeadTracker API available")'
 ```
@@ -14,7 +14,7 @@ python3 -c 'from f32c import HeadTracker, TrackingConfig, TrackingError; print("
 
 0.2.0 将发布内容收敛为电机 SDK，保留 `HeadTracker`、`TrackingConfig`、`TrackingError` 和运行时 `set_pi()`，沿用原有电机配置结构和默认 PI。图像采集相关的 Python 接口和原生组件不再提供，输入数据由上层应用管理。调参工具与示例位于源码仓库 `examples/`，不随 whl 安装。
 
-0.3.0 新增同步 `HeadController`：统一使用 `HeadTracker` 生成参考，并负责反馈读取、参考超前限制、误差/无进展/保持振荡保护和故障清理。UI 和集成应用调用同一入口，无后台线程。原有 `Gimbal2Dof` 和纯软件 `HeadTracker` 保持可用；低层 API 不自动加入控制策略。0.3.1 将高层使能后的默认目标设为 yaw=0°、pitch=35°，通过 `DEFAULT_HOLD_POSITION` 导出；本次不再调整 PI。固定目标不等于实际到位或机械锁止，应以回读验证。
+0.3.0 新增同步 `HeadController`：统一使用 `HeadTracker` 生成参考，并负责反馈读取、参考超前限制、误差/无进展/保持振荡保护和故障清理。UI 和集成应用调用同一入口，无后台线程。原有 `Gimbal2Dof` 和纯软件 `HeadTracker` 保持可用；低层 API 不自动加入控制策略。0.3.1 将高层使能后的默认目标设为 yaw=0°、pitch=35°，通过 `DEFAULT_HOLD_POSITION` 导出。0.3.2进一步统一实测电机参数和集成入口默认值。固定目标不等于实际到位或机械锁止，应以回读验证。
 
 ## 2. 现场方向、目标与控制语义
 
@@ -62,14 +62,14 @@ with Gimbal2Dof(Config(device="/dev/ttyACM0")) as motor:
 | `device` | `None` | 串口路径；空值扫描 `/dev/serial/by-id/*`、`ttyACM*`、`ttyUSB*`，要求两轴回应 |
 | `baud` | `115200` | 支持 9600、57600、115200，8N1 |
 | `id_yaw`, `id_pitch` | `1`, `2` | 地址 1～255，必须不同 |
-| `travel_rpm` | `80` | 目标速度参数，0～1000 RPM；不等同于主机轨迹速度 |
-| `accel` | `10` | 加速度参数，0～65535，协议单位转/s² |
-| `yaw_speed_kp`, `yaw_speed_ki` | `50`, `16` | yaw 速度环 PI，整数 0～256 |
-| `yaw_pos_kp`, `yaw_pos_ki` | `63`, `0` | yaw 位置环 PI，整数 0～256 |
-| `pitch_speed_kp`, `pitch_speed_ki` | `40`, `8` | pitch 速度环 PI，整数 0～256 |
-| `pitch_pos_kp`, `pitch_pos_ki` | `70`, `8` | pitch 位置环 PI，整数 0～256 |
+| `travel_rpm` | `5` | 目标速度参数，0～1000 RPM；不等同于主机轨迹速度 |
+| `accel` | `1` | 加速度参数，0～65535，协议单位转/s² |
+| `yaw_speed_kp`, `yaw_speed_ki` | `40`, `4` | yaw 速度环 PI，整数 0～256 |
+| `yaw_pos_kp`, `yaw_pos_ki` | `42`, `0` | yaw 位置环 PI，整数 0～256 |
+| `pitch_speed_kp`, `pitch_speed_ki` | `10`, `4` | pitch 速度环 PI，整数 0～256 |
+| `pitch_pos_kp`, `pitch_pos_ki` | `40`, `0` | pitch 位置环 PI，整数 0～256 |
 
-0.2.2 的高增益组合在实际 UI 使能时振荡，已撤回。0.3.1 当前默认参数：yaw 速度 PI=50/16、位置 PI=63/0，pitch 速度 PI=40/8、位置 PI=70/8。按用户要求提高 pitch 增益，新组合尚未完成真机验收。UI 采用最高 120°/s、最大加速度 600°/s² 的 `HeadTracker` 轨迹，在接近目标时减速。0.2.5 增加按实际反馈暂停参考推进的处理，通过两轮 pitch=0° 时 yaw 的 0°→+60°→−60°→0° 实机动作，以及每 0.2 秒改一次 yaw 目标的连续拖动模拟；固定保持末段两轴峰峰值最大约 0.1°、均值误差绝对值最大约 0.1°。此前 yaw/pitch ±15° 双向切换末段峰峰值最大约 0.4°。这些记录不代表所有 pitch 姿态、外力、相机并行和重新上电均已验证。0.3.0 的故障路径检查为无硬件测试，不新增实机姿态验收。`set_pi()` 更新当前实例，不修改全局默认值。
+0.2.2 的高增益组合在实际 UI 使能时振荡，已撤回。0.3.2 将已用于实际回零及10秒保持的参数固化为 C++/C/Python 默认值：yaw 速度 PI=40/4、位置 PI=42/0，pitch 速度 PI=10/4、位置 PI=40/0，5 RPM、加速度1转/s²。同一配置下分段回零、35°直接回零及直接使能到0°均完成；一次0°保持10秒的 yaw 范围−0.2°～−0.1°、pitch范围−0.3°～−0.1°。这些实测使用低层 Gimbal2Dof，不能据此宣称 Quest 连续跟随已通过硬件验收。HeadController/UI 默认参考上限30°/s、360°/s²，分别按5 RPM和1转/s²换算，是保守软件约束而非新增实测结果。0.2.5 增加按实际反馈暂停参考推进的处理，通过两轮 pitch=0° 时 yaw 的 0°→+60°→−60°→0° 实机动作，以及每 0.2 秒改一次 yaw 目标的连续拖动模拟；固定保持末段两轴峰峰值最大约 0.1°、均值误差绝对值最大约 0.1°。此前 yaw/pitch ±15° 双向切换末段峰峰值最大约 0.4°。这些记录不代表所有 pitch 姿态、外力、相机并行和重新上电均已验证。0.3.0 的故障路径检查为无硬件测试，不新增实机姿态验收。`set_pi()` 更新当前实例，不修改全局默认值。
 
 ### 参数设置方式
 
@@ -86,10 +86,10 @@ from f32c import Config, Gimbal2Dof
 
 motor_config = Config(
     device="/dev/ttyACM0",
-    travel_rpm=80,
-    accel=10,
-    yaw_speed_kp=50, yaw_speed_ki=16, yaw_pos_kp=63, yaw_pos_ki=0,
-    pitch_speed_kp=40, pitch_speed_ki=8, pitch_pos_kp=70, pitch_pos_ki=8,
+    travel_rpm=5,
+    accel=1,
+    yaw_speed_kp=40, yaw_speed_ki=4, yaw_pos_kp=42, yaw_pos_ki=0,
+    pitch_speed_kp=10, pitch_speed_ki=4, pitch_pos_kp=40, pitch_pos_ki=0,
 )
 motor = Gimbal2Dof(motor_config)  # 此处不打开串口、不使能。
 ```
@@ -231,10 +231,9 @@ tracker = HeadTracker(motor.read(), settings)
 
 ```python
 import time
-from f32c import Config, HeadController, TrackingConfig
+from f32c import Config, HeadController
 
-with HeadController(Config(device="/dev/ttyACM0"),
-                    TrackingConfig(pitch_limits=(-180, 45))) as head:
+with HeadController(Config(device="/dev/ttyACM0")) as head:
     # 仅在应用已取得操作员使能许可后调用。
     head.enable()                 # 默认从实测位置前往 yaw=0°、pitch=35°；不写零点。
     while head.phase == "moving":
@@ -244,7 +243,11 @@ with HeadController(Config(device="/dev/ttyACM0"),
 
 默认目标由 `f32c.DEFAULT_HOLD_POSITION` 给出。`enable()` 只在从失能进入使能时建立此目标，重复调用不会覆盖已有目标。显式 `move_to(0, 0)` 仍可回已有零位；到位后应持续 `tick()` 保持反馈监测。自定义目标范围仍会裁剪默认目标。低层 `Gimbal2Dof.enable()` 继续原位保持。
 
-仓库提供固定目标保持窗口：安装此 whl 和 `requirements-ui.txt` 后，运行 `python3 examples/hold_position.py /dev/ttyACM0`。它只调用低层 `enable_at(0, 35)`，不走回零流程，关闭窗口或点击“解锁并退出”会发送两轴失能请求。窗口沿用本轮原位保持所用的显式现场配置：yaw 速度PI=40/4、位置PI=42/0，pitch速度PI=10/4、位置PI=40/0，5 RPM、加速度1转/s²；这是独立于 `Config()` 默认值的示例配置。窗口串行读取两轴角度和电压，电压超出8～15 V或通信异常时停止保持并请求失能。它会向固定目标运动，不置零、不保存参数，也不保证外力下完全无偏移。
+仓库提供固定目标保持窗口：安装此 whl 和 `requirements-ui.txt` 后，运行 `python3 examples/hold_position.py /dev/ttyACM0`。它只调用低层 `enable_at(0, 35)`，不走回零流程，关闭窗口或点击“解锁并退出”会发送两轴失能请求。窗口直接采用0.3.2的 `Config()` 默认配置，不再维护另一份PI常量。窗口串行读取两轴角度和电压，电压超出8～15 V或通信异常时停止保持并请求失能。它会向固定目标运动，不置零、不保存参数，也不保证外力下完全无偏移。
+
+`HeadController()` 不传自定义 tracking 时，默认 yaw 目标范围−60°～60°、pitch −180°～45°、软件速度上限30°/s、加速度360°/s²。独立的 `TrackingConfig`/`HeadTracker` 保留通用算法默认值；显式传入自定义 `TrackingConfig` 会覆盖上述控制器基线，不应继续沿用主仓旧的高速配置。
+
+Quest 集成见同目录[Quest集成说明](Quest集成说明.md)，重点是单线程设备所有权、只提交新样本、持续 tick、输入失效和坐标映射。
 
 跟随模式仅在收到**新输入**时调用 `head.set_target(yaw, pitch, received_at=接收时单调时钟)`；持续调用 `head.tick(may_send=权限回调)`，回调必须无副作用、快速返回。SDK 在反馈之后及每轴发送前复核许可，撤销时停止新目标输出，不发送额外制动轨迹。`head.hold()` 同样停止新参考，仍读取反馈和检查误差。失联恢复应由宿主确认身份/授权，再提交新样本，轨迹从新反馈建立。
 

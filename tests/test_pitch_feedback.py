@@ -96,7 +96,7 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(result['status'], 'rebound_captured')
         self.assertTrue(result['disable_requests_sent'])
         gains = [int.from_bytes(f[3:5], 'big') for f in frames if f[1] == 2 and f[2] in (15,16,17,18)]
-        self.assertEqual(gains, [40,8,70,8])
+        self.assertEqual(gains, [10,4,40,0])
         self.assertEqual([f[1] for f in frames if f[2] == 5][-2:], [1,2])
         self.assertFalse(any(f[2] in (8,10) for f in frames))
 
@@ -114,7 +114,7 @@ class CaptureTests(unittest.TestCase):
         targets = [int.from_bytes(f[3:5], 'big') for f in frames if f[1:3] == bytes((1,3))]
         self.assertLess(min(targets), targets[0])
         gains = [int.from_bytes(f[3:5], 'big') for f in frames if f[1] == 2 and f[2] in (15,16,17,18)]
-        self.assertEqual(gains, [40,8,70,8])
+        self.assertEqual(gains, [10,4,40,0])
         self.assertEqual([f[1] for f in frames if f[2] == 5][-2:], [1,2])
 
 

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(f32c_sdk VERSION 0.3.1 LANGUAGES CXX)
+project(f32c_sdk VERSION 0.3.2 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -84,7 +84,8 @@ endif()
 install(TARGETS f32c EXPORT f32cTargets LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(FILES include/f32c/gimbal.hpp include/f32c/c_api.h include/f32c/protocol.hpp
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/f32c)
-install(FILES docs/SDK使用说明.md DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/f32c)
+install(FILES docs/SDK使用说明.md docs/Quest集成说明.md
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/f32c)
 install(EXPORT f32cTargets NAMESPACE f32c:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/f32c)
 configure_package_config_file(cmake/f32cConfig.cmake.in
     ${CMAKE_CURRENT_BINARY_DIR}/f32cConfig.cmake

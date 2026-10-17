@@ -111,7 +111,7 @@ class TuningTests(unittest.TestCase):
         args = tune.parse_args(argv)
         self.assertEqual(args.limits, [None, None])
         self.assertEqual(args.config.pitch_speed_kp, 12)
-        self.assertEqual(tune.Config().pitch_speed_kp, 40)
+        self.assertEqual(tune.Config().pitch_speed_kp, 10)
         state = SimpleNamespace(yaw_deg=350, pitch_deg=359.9)
         self.assertAlmostEqual(tune.checked_position(state, [None, None])[0], -10)
         self.assertEqual(tune.checked_position(state, [[-5, 5], None])[0], -10)

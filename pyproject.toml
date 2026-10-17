@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "f32c-neck-motors"
-version = "0.3.1"
+version = "0.3.2"
 description = "F32C motor SDK with head tracking and a bundled Linux native library"
 readme = "docs/SDK使用说明.md"
 requires-python = ">=3.10"

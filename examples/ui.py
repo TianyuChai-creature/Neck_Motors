@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "python"))
-from f32c import Config, F32CError, HeadController, HeadControlError, TrackingConfig
+from f32c import Config, F32CError, HeadController, HeadControlError
 
 ZED_LIB_CANDIDATES = (ROOT / "build-zed" / "libf32c_zed.so", ROOT / "build" / "libf32c_zed.so")
 
@@ -196,7 +196,7 @@ class Panel(QWidget):
         smooth_row.addWidget(QLabel("最高运动速度"))
         self.smooth_speed = QSpinBox()
         self.smooth_speed.setRange(5, 360)
-        self.smooth_speed.setValue(120)
+        self.smooth_speed.setValue(int(self.head.tracking.max_speed_deg_s))
         self.smooth_speed.setSuffix(" °/s")
         smooth_row.addWidget(self.smooth_speed)
         smooth_row.addStretch(1)
@@ -270,7 +270,7 @@ class Panel(QWidget):
             return
         try:
             if self.head.tracking.max_speed_deg_s != self.smooth_speed.value():
-                self.head.set_motion_limits(self.smooth_speed.value(), 600)
+                self.head.set_motion_limits(self.smooth_speed.value(), self.head.tracking.max_accel_deg_s2)
             state = self.head.tick()
             self.show_state(state)
         except HeadControlError as exc:
@@ -486,9 +486,7 @@ class Panel(QWidget):
 def main() -> None:
     app = QApplication(sys.argv)
     device = sys.argv[1] if len(sys.argv) > 1 else None
-    head = HeadController(Config(device=device), TrackingConfig(
-        yaw_limits=(-60, 60), pitch_limits=(-180, 45),
-        max_speed_deg_s=120, max_accel_deg_s2=600)).open()
+    head = HeadController(Config(device=device)).open()
     try:
         window = Panel(head)
         window.resize(1100, 680)

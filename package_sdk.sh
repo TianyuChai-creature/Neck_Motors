@@ -40,5 +40,5 @@ cp "$root_dir/docs/SDK使用说明.md" "$src_dir/docs/"
 "$python_bin" "$root_dir/tests/test_wheel.py" "$tmp_dir/out/"*.whl
 
 mv "$tmp_dir/out/"*.whl "$root_dir/wheel/"
-cp "$root_dir/docs/SDK使用说明.md" "$root_dir/wheel/SDK使用说明.md"
+cp "$root_dir/docs/SDK使用说明.md" "$root_dir/docs/Quest集成说明.md" "$root_dir/wheel/"
 echo "SDK wheel written to $root_dir/wheel"

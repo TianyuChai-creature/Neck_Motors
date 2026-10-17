@@ -88,7 +88,9 @@ class HeadController:
                  tracking: TrackingConfig | None = None,
                  protection: ProtectionConfig | None = None, *,
                  motor: Gimbal2Dof | None = None):
-        self.tracking = tracking or TrackingConfig(pitch_limits=(-180, 45))
+        self.tracking = tracking or TrackingConfig(
+            yaw_limits=(-60, 60), pitch_limits=(-180, 45),
+            max_speed_deg_s=30, max_accel_deg_s2=360)
         if self.tracking.pitch_limits[0] > 45:
             raise ValueError("pitch target range must include an angle at or below 45 degrees")
         self.protection = protection or ProtectionConfig()

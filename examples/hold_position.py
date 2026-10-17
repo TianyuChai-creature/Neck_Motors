@@ -23,9 +23,7 @@ ROOT=Path(__file__).resolve().parent.parent
 def run(device, directory, stop_after=None):
     directory=Path(directory)
     app=QApplication.instance() or QApplication([])
-    cfg=f32c.Config(device=device,travel_rpm=5,accel=1,
-                   yaw_speed_kp=40,yaw_speed_ki=4,yaw_pos_kp=42,yaw_pos_ki=0,
-                   pitch_speed_kp=10,pitch_speed_ki=4,pitch_pos_kp=40,pitch_pos_ki=0)
+    cfg=f32c.Config(device=device)
     result={'action':'hold_fixed_position','config':asdict(cfg),'status':'opening',
             'hardware_state':'unknown','module':f32c.__file__}
     motor=None;fd=None;closed=False;last_report=0

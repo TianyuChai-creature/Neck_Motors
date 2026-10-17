@@ -248,6 +248,32 @@ class ControllerTests(unittest.TestCase):
         with self.assertRaisesRegex(HeadControlError, "move_timeout"):
             for _ in range(20): self.tick()
 
+    def test_default_following_profile_latest_input_stale_hold_and_resume(self):
+        head = self.controller(State(0, 35))
+        self.assertEqual(head.tracking.yaw_limits, (-60, 60))
+        self.assertEqual(head.tracking.pitch_limits, (-180, 45))
+        self.assertEqual(head.tracking.max_speed_deg_s, 30)
+        self.assertEqual(head.tracking.max_accel_deg_s2, 360)
+        for _ in range(120):
+            head.set_target(10, 35, received_at=self.now)
+            head.set_target(-10, 20, received_at=self.now)
+            status = self.tick()
+            self.assertLessEqual(status.command.yaw_deg, 0)
+        self.assertEqual(status.target, State(-10, 20))
+        self.assertLessEqual(abs(status.measured.yaw_deg + 10), 1)
+        self.assertLessEqual(abs(status.measured.pitch_deg - 20), 1)
+        for _ in range(12): self.tick()
+        self.assertEqual(head.snapshot.reason, "input_stale")
+        sent = list(self.motor.sent)
+        for _ in range(10): self.tick()
+        self.assertEqual(self.motor.sent, sent)
+        self.now += 1
+        head.set_target(120, 90, received_at=self.now)
+        self.assertEqual(head.snapshot.target, State(60, 45))
+        self.tick()
+        self.assertEqual(head.phase, "following")
+        self.assertEqual(self.motor.disables, 0)
+
     def test_invalid_parameters_and_passive_close(self):
         for config in (Config(accel=.5), Config(id_yaw=True), Config(pitch_pos_kp=.5)):
             with self.assertRaisesRegex(ValueError, "integer"): config._validate()

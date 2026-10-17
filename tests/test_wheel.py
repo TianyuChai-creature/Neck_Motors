@@ -37,6 +37,9 @@ def validate(path: Path) -> None:
                     f"Python module missing or out of date: {source.name}")
         require(archive.read(prefix + "native/share/doc/f32c/SDK使用说明.md") == manual,
                 "installed manual differs from the source manual")
+        require(archive.read(prefix + "native/share/doc/f32c/Quest集成说明.md") ==
+                (ROOT / "docs/Quest集成说明.md").read_bytes(),
+                "installed Quest integration guide differs from source")
         metadata = message_from_string(archive.read(f"{package}.dist-info/METADATA").decode())
         require(metadata["Version"] == version, "wheel version differs from source version")
         require(metadata.get_payload().rstrip() == manual.decode().rstrip(),

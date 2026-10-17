@@ -24,16 +24,16 @@ class Config:
     baud: int = 115200
     id_yaw: int = 1
     id_pitch: int = 2
-    travel_rpm: int = 80
-    accel: int = 10
-    yaw_speed_kp: int = 50
-    yaw_speed_ki: int = 16
-    yaw_pos_kp: int = 63
+    travel_rpm: int = 5
+    accel: int = 1
+    yaw_speed_kp: int = 40
+    yaw_speed_ki: int = 4
+    yaw_pos_kp: int = 42
     yaw_pos_ki: int = 0
-    pitch_speed_kp: int = 40
-    pitch_speed_ki: int = 8
-    pitch_pos_kp: int = 70
-    pitch_pos_ki: int = 8
+    pitch_speed_kp: int = 10
+    pitch_speed_ki: int = 4
+    pitch_pos_kp: int = 40
+    pitch_pos_ki: int = 0
 
     def _validate(self) -> None:
         if self.device is not None and not isinstance(self.device, str):

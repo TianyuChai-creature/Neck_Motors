@@ -13,7 +13,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "examples"))
 from PySide6.QtWidgets import QApplication
 import ui
-from f32c import HeadController, State, TrackingConfig
+from f32c import HeadController, State
 from test_controller import Motor
 
 
@@ -47,15 +47,15 @@ class UiTests(unittest.TestCase):
         self.motor = Motor(State(30, 45.2))
         self.motor.start_log = lambda _path: None
         self.motor.stop_log = lambda: None
-        self.head = HeadController(motor=self.motor, tracking=TrackingConfig(
-            yaw_limits=(-60, 60), pitch_limits=(-180, 45),
-            max_speed_deg_s=120, max_accel_deg_s2=600)).open()
+        self.head = HeadController(motor=self.motor).open()
         self.panel = ui.Panel(self.head)
         self.addCleanup(self.panel.close)
 
     def test_enable_and_zero_share_the_sdk_trajectory_and_feedback(self):
         self.assertEqual(self.panel.pitch.slider.maximum(), 450)
         self.assertFalse(hasattr(self.panel, "set_zero"))
+        self.assertEqual(self.panel.smooth_speed.value(), 30)
+        self.assertEqual(self.head.tracking.max_accel_deg_s2, 360)
         self.panel.enable()
         self.assertAlmostEqual(self.head.snapshot.command.pitch_deg, 45.2)
         self.assertEqual(self.head.snapshot.target, State(0, 35))

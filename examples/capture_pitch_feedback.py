@@ -17,7 +17,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "python"))
-from f32c import Config, Gimbal2Dof, HeadController, TrackingConfig
+from f32c import Config, Gimbal2Dof, HeadController
 
 
 def query(fd, kind, raw, timeout=.025, *, address=2):
@@ -76,9 +76,7 @@ def run(device, *, both_zero=False):
         fd = os.open(device, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         motor = Gimbal2Dof(config).open()
-        head = HeadController(motor=motor, tracking=TrackingConfig(
-            yaw_limits=(-60, 60), pitch_limits=(-180, 45),
-            max_speed_deg_s=120, max_accel_deg_s2=600)).open()
+        head = HeadController(motor=motor).open()
         fcntl.ioctl(fd, termios.TIOCEXCL)
         head.start_log(directory / "serial.log")
         with (directory / "feedback.jsonl").open("x") as raw, (directory / "samples.csv").open("x", newline="") as output:

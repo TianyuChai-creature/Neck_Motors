@@ -45,9 +45,13 @@ class FrameTests(unittest.TestCase):
 
 
 class FindAngleTests(unittest.TestCase):
-    def test_reads_signed_tenths(self):
+    def test_reads_tenths_and_wraps_to_signed(self):
         self.assertEqual(p.find_angle(h("7A 01 02 00 00 05 C8 B4 7B"), 1), 148.0)
-        self.assertEqual(p.find_angle(reply(2, -123), 2), -12.3)
+        self.assertEqual(p.find_angle(reply(2, 3477), 2), -12.3)    # motor says 347.7
+        self.assertEqual(p.find_angle(reply(2, 3599), 2), -0.1)
+        self.assertEqual(p.find_angle(reply(2, 1799), 2), 179.9)
+        self.assertEqual(p.find_angle(reply(2, 1800), 2), -180.0)
+        self.assertEqual(p.find_angle(reply(2, 0), 2), 0.0)
 
     def test_skips_noise_echo_other_motors_and_corrupt_frames(self):
         corrupt = bytearray(reply(1, 999))
@@ -64,8 +68,8 @@ class FindAngleTests(unittest.TestCase):
         self.assertIsNone(p.find_angle(b"", 1))
 
     def test_high_ids_and_payload_containing_tail_byte(self):
-        self.assertEqual(p.find_angle(reply(120, 0x7B7B), 120), 3161.1)
-        self.assertEqual(p.find_angle(reply(121, -1), 121), -0.1)
+        self.assertEqual(p.find_angle(reply(120, 0x0B7B), 120), -66.1)   # 7B inside the payload
+        self.assertEqual(p.find_angle(reply(121, 0x0123), 121), 29.1)
 
 
 if __name__ == "__main__":

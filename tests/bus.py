@@ -114,7 +114,7 @@ class Bus:
     def _reply(self, query: bytes, addr: int, axis: Axis) -> None:
         if self.delay:
             time.sleep(self.delay)
-        body = bytes((0x7A, addr, 2)) + round(axis.deg * 10).to_bytes(4, "big", signed=True)
+        body = bytes((0x7A, addr, 2)) + (round(axis.deg * 10) % 3600).to_bytes(4, "big")
         reply = body + bytes((xor(body), 0x7B))
         prefix = query if self.echo else b""
         if self.noise:

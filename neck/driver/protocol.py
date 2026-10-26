@@ -75,12 +75,16 @@ def query_angle(addr: int) -> bytes:
 
 
 def find_angle(buf: bytes, addr: int) -> float | None:
-    """First valid angle reply from `addr` inside a noisy byte stream, in degrees (signed).
+    """First valid angle reply from `addr` inside a noisy byte stream, in degrees.
+
+    The motor reports its single-turn angle as 0..359.9; it is returned as -180..179.9 so that
+    "slightly before zero" is a small negative number (the stored zero sits on the seam).
 
     Echoes of our own query, other motors' replies, garbage and corrupt checksums are skipped.
     """
     for i in range(len(buf) - _REPLY_LEN + 1):
         if (buf[i] == HEAD and buf[i + 1] == addr and buf[i + 2] == _ANGLE_FEEDBACK
                 and buf[i + 8] == TAIL and bcc(buf[i:i + 7]) == buf[i + 7]):
-            return int.from_bytes(buf[i + 3:i + 7], "big", signed=True) / 10.0
+            tenths = int.from_bytes(buf[i + 3:i + 7], "big", signed=True)
+            return ((tenths + 1800) % 3600 - 1800) / 10.0
     return None

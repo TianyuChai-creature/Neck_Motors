@@ -1,16 +1,13 @@
 [build-system]
-requires = ["setuptools>=64", "wheel"]
+requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "f32c-neck-motors"
-version = "0.3.2"
-description = "F32C motor SDK with head tracking and a bundled Linux native library"
-readme = "docs/SDK使用说明.md"
+version = "0.4.0"
+description = "Two-axis F32C neck: a driver layer for the motors and a control layer for safe motion"
+readme = "readme.md"
 requires-python = ">=3.10"
 
 [tool.setuptools]
-package-dir = {"" = "python"}
-
-[tool.setuptools.packages.find]
-where = ["python"]
+packages = ["neck", "neck.driver", "neck.control"]

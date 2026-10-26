@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Neck 回放</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1f2933; --mute:#6b7785; --line:#e1e5ea;
+          --blue:#2f6fed; --green:#1f9d63; --orange:#f08a24; --red:#d64545; --teal:#13a3a3; --amber:#d9a400; --gray:#9aa5b1; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.5 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif; }
+  header { padding:14px 20px 4px; }
+  h1 { margin:0; font-size:20px; }
+  header p { margin:2px 0 0; color:var(--mute); font-size:12.5px; }
+  main { display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:14px; padding:12px 20px 24px; }
+  @media (max-width:1000px){ main{ grid-template-columns:1fr; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
+  .card h2 { margin:0 0 8px; font-size:13px; color:var(--mute); font-weight:600; letter-spacing:.04em; }
+  .controls { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  button, select { font:inherit; border:1px solid var(--line); background:#fff; border-radius:8px; padding:5px 12px; cursor:pointer; }
+  button:hover { border-color:var(--blue); }
+  button.primary { background:var(--blue); color:#fff; border-color:var(--blue); min-width:64px; }
+  #scrub { flex:1; min-width:220px; }
+  #clock { font-variant-numeric:tabular-nums; color:var(--mute); min-width:96px; text-align:right; }
+  .chapters { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+  .chapters button { font-size:12.5px; padding:3px 10px; }
+  .chapters button.on { background:#eaf1ff; border-color:var(--blue); color:var(--blue); }
+  canvas { width:100%; display:block; cursor:pointer; }
+  .legend { display:flex; gap:16px; font-size:12px; color:var(--mute); margin-top:6px; flex-wrap:wrap; }
+  .legend i { display:inline-block; width:18px; height:0; border-top:3px solid; vertical-align:middle; margin-right:5px; }
+  .note { border-left:4px solid var(--blue); padding:6px 10px; background:#f4f8ff; border-radius:0 8px 8px 0; }
+  .note b { display:block; }
+  .badge { display:inline-block; padding:2px 12px; border-radius:20px; color:#fff; font-weight:600; font-size:15px; }
+  .kv { display:grid; grid-template-columns:auto 1fr 1fr; gap:2px 12px; margin-top:10px; font-variant-numeric:tabular-nums; }
+  .kv span:nth-child(3n+1){ color:var(--mute); }
+  .kv .head { color:var(--mute); font-size:12px; }
+  .layers { margin-top:2px; }
+  .layers rect { fill:#fff; stroke:var(--line); stroke-width:1.5; rx:8; }
+  .layers text { font-size:12px; fill:var(--ink); }
+  .layers .sub { fill:var(--mute); font-size:10.5px; }
+  .layers .arrow { stroke:var(--line); stroke-width:3; fill:none; transition:stroke .08s; }
+  .layers .arrow.tx { stroke:var(--orange); }
+  .layers .arrow.rx { stroke:var(--green); }
+  .layers .hot rect { stroke:var(--blue); }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  th { text-align:left; color:var(--mute); font-weight:600; padding:3px 6px; border-bottom:1px solid var(--line); }
+  td { padding:3px 6px; border-bottom:1px solid #f0f2f4; }
+  tr.row { cursor:pointer; } tr.row:hover { background:#f4f8ff; }
+  tr.last { background:#fff7e8; }
+  td.hex { font-family:ui-monospace,Menlo,Consolas,monospace; color:var(--mute); }
+  .tx-t { color:var(--orange); font-weight:600; } .rx-t { color:var(--green); font-weight:600; }
+  label { color:var(--mute); font-size:12.5px; }
+  .guide { color:var(--mute); font-size:12.5px; margin:0; padding-left:18px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Neck 回放 · 一次完整运行</h1>
+  <p>由 <code>tools/replay.py</code> 生成：真实的 Driver 和 Neck 代码，对着一个模拟的电机总线跑一遍剧本。没有真机，电机模型是一阶滞后，只用来看数据怎么流动。</p>
+</header>
+<main>
+  <section style="display:flex;flex-direction:column;gap:14px;min-width:0">
+    <div class="card">
+      <div class="controls">
+        <button class="primary" id="play">▶ 播放</button>
+        <select id="speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select>
+        <input type="range" id="scrub" min="0" max="1000" value="0">
+        <span id="clock">0.0 / 0.0 s</span>
+      </div>
+      <div class="chapters" id="chapters"></div>
+    </div>
+    <div class="card"><div class="note" id="note"></div></div>
+    <div class="card">
+      <h2>两轴角度（点击图表跳转）</h2>
+      <canvas id="chart" height="360"></canvas>
+      <div class="legend">
+        <span><i style="border-color:#9aa5b1;border-top-style:dashed"></i>目标（上层给的）</span>
+        <span><i style="border-color:#2f6fed"></i>指令（Neck 发给电机的）</span>
+        <span><i style="border-color:#1f9d63"></i>实测（电机回报的）</span>
+        <span>下方色条：上＝Neck 状态 phase，下＝保护等级 level</span>
+      </div>
+    </div>
+    <div class="card">
+      <h2>串口帧（光标之前的最近几帧，新的在上，点一行跳转）</h2>
+      <label><input type="checkbox" id="showq"> 同时显示查询 / 反馈帧（每个 tick 两轴各一来一回）</label>
+      <table><thead><tr><th style="width:72px">时间</th><th style="width:44px">方向</th><th style="width:56px">轴</th><th>含义</th><th>原始字节</th></tr></thead><tbody id="frames"></tbody></table>
+    </div>
+  </section>
+  <aside style="display:flex;flex-direction:column;gap:14px;min-width:0">
+    <div class="card">
+      <h2>此刻</h2>
+      <div><span class="badge" id="phase">off</span> <span id="level" style="margin-left:6px"></span></div>
+      <div style="margin-top:6px;min-height:20px;color:var(--mute)" id="reason"></div>
+      <div class="kv">
+        <span class="head"></span><span class="head">yaw</span><span class="head">pitch</span>
+        <span>目标</span><span id="gy">—</span><span id="gp">—</span>
+        <span>指令</span><span id="cy">—</span><span id="cp">—</span>
+        <span>实测</span><span id="my">—</span><span id="mp">—</span>
+      </div>
+    </div>
+    <div class="card">
+      <h2>数据在层间流动</h2>
+      <svg class="layers" viewBox="0 0 310 330" width="100%">
+        <g id="L0"><rect x="30" y="4" width="250" height="52"/><text x="155" y="26" text-anchor="middle">你的程序 / tools/ui.py</text><text class="sub" x="155" y="44" text-anchor="middle">set_target · move_to · tick · set_zero</text></g>
+        <path class="arrow" id="a01" d="M155 58 V 84"/>
+        <g id="L1"><rect x="30" y="86" width="250" height="62"/><text x="155" y="108" text-anchor="middle">Neck（neck.control）</text><text class="sub" x="155" y="126" text-anchor="middle">轨迹限位限速 · 分级保护 · 状态机</text><text class="sub" x="155" y="140" text-anchor="middle">只和 Driver 的 6 个方法打交道</text></g>
+        <path class="arrow" id="a12" d="M155 150 V 176"/>
+        <g id="L2"><rect x="30" y="178" width="250" height="62"/><text x="155" y="200" text-anchor="middle">Driver（neck.driver）</text><text class="sub" x="155" y="218" text-anchor="middle">打包帧 · 8 ms 间隔 · 查询重试 · 角度折叠</text><text class="sub" x="155" y="232" text-anchor="middle">DriverState：OPEN / ARMED / UNKNOWN</text></g>
+        <path class="arrow" id="a23" d="M105 242 V 268 M205 242 V 268"/>
+        <g id="L3"><rect x="30" y="270" width="250" height="52"/><text x="155" y="292" text-anchor="middle">TTL 串口 → yaw(ID1) / pitch(ID2)</text><text class="sub" x="155" y="310" text-anchor="middle">橙＝发出　绿＝收到</text></g>
+      </svg>
+    </div>
+    <div class="card">
+      <h2>怎么看这个页面</h2>
+      <ul class="guide">
+        <li>点“播放”或拖进度条；上面的章节按钮跳到各个场景。</li>
+        <li>蓝线贴着灰线走＝Neck 在跟目标；绿线晚一点＝电机的滞后。</li>
+        <li>色条变橙＝降级，变红＝故障，故障时 Driver 已发失能。</li>
+        <li>下方表格里橙色 TX 是主机发出的命令，绿色 RX 是电机回报。</li>
+      </ul>
+    </div>
+  </aside>
+</main>
+<script>
+const DATA = /*DATA*/null;
+const COLORS = {off:"#9aa5b1", moving:"#2f6fed", following:"#1f9d63", hold:"#13a3a3", stale:"#d9a400", degraded:"#f08a24", fault:"#d64545"};
+const PHASE_TEXT = {off:"未使能", moving:"按轨迹移动", following:"实时跟随", hold:"保持", stale:"输入过期", degraded:"降级", fault:"故障"};
+const LEVEL_COLORS = ["#e1e5ea", "#d9a400", "#f08a24", "#d64545"];
+const LEVEL_TEXT = ["正常", "level 1 扰动", "level 2 降级", "level 3 故障"];
+const S = DATA.samples, F = DATA.frames, M = DATA.marks, T = DATA.duration;
+let cursor = 0, playing = false, last = 0;
+const $ = id => document.getElementById(id);
+
+// helpers
+const idxAt = (arr, t) => { let lo = 0, hi = arr.length - 1, r = 0; while (lo <= hi) { const m = (lo + hi) >> 1; if (arr[m].t <= t) { r = m; lo = m + 1; } else hi = m - 1; } return r; };
+const fmt = v => v == null ? "—" : v.toFixed(1) + "°";
+
+// chapters
+M.forEach((m, i) => { const b = document.createElement("button"); b.textContent = (i + 1) + ". " + m.title; b.onclick = () => seek(m.t); b.id = "ch" + i; $("chapters").appendChild(b); });
+
+// chart
+const chart = $("chart"), ctx = chart.getContext("2d");
+const PAD = {l:46, r:10, t:8, b:8};
+let W = 0, H = 0, dpr = 1;
+function resize() { dpr = window.devicePixelRatio || 1; W = chart.clientWidth; H = 360; chart.width = W * dpr; chart.height = H * dpr; chart.style.height = H + "px"; draw(); }
+function range(k) { let lo = 1e9, hi = -1e9; for (const s of S) for (const key of ["m","c","g"]) if (s[key]) { lo = Math.min(lo, s[key][k]); hi = Math.max(hi, s[key][k]); } const p = Math.max(5, (hi - lo) * .08); return [lo - p, hi + p]; }
+const R = [range(0), range(1)];
+function draw() {
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H);
+  const plotW = W - PAD.l - PAD.r, strip = 22, gap = 10;
+  const chartH = (H - PAD.t - PAD.b - strip * 2 - 6 - gap) / 2;
+  const x = t => PAD.l + t / T * plotW;
+  ctx.font = "12px sans-serif";
+  [0, 1].forEach(k => {
+    const top = PAD.t + k * (chartH + gap), [lo, hi] = R[k];
+    const y = v => top + (hi - v) / (hi - lo) * chartH;
+    ctx.fillStyle = "#fafbfc"; ctx.fillRect(PAD.l, top, plotW, chartH);
+    ctx.strokeStyle = "#e1e5ea"; ctx.lineWidth = 1; ctx.fillStyle = "#6b7785"; ctx.textAlign = "right";
+    const step = (hi - lo) > 120 ? 30 : (hi - lo) > 60 ? 20 : 10;
+    for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) { ctx.beginPath(); ctx.moveTo(PAD.l, y(v)); ctx.lineTo(PAD.l + plotW, y(v)); ctx.stroke(); ctx.fillText(v + "°", PAD.l - 6, y(v) + 4); }
+    ctx.textAlign = "left"; ctx.fillStyle = "#1f2933"; ctx.fillText(k ? "pitch" : "yaw", PAD.l + 6, top + 34);
+    for (const [key, color, dash, w] of [["g", "#9aa5b1", [5, 4], 1.5], ["c", "#2f6fed", [], 1.8], ["m", "#1f9d63", [], 2]]) {
+      ctx.strokeStyle = color; ctx.setLineDash(dash); ctx.lineWidth = w; ctx.beginPath(); let pen = false;
+      for (const s of S) { const v = s[key]; if (!v) { pen = false; continue; } const px = x(s.t), py = y(v[k]); if (pen) ctx.lineTo(px, py); else { ctx.moveTo(px, py); pen = true; } }
+      ctx.stroke(); ctx.setLineDash([]);
+    }
+  });
+  const sy = PAD.t + 2 * chartH + gap + 4;
+  [["phase", COLORS, 0], ["level", LEVEL_COLORS, 1]].forEach(([key, pal, row]) => {
+    for (let i = 0; i < S.length; i++) { const s = S[i], n = S[i + 1] ? S[i + 1].t : T; const c = key === "phase" ? pal[s.phase] : pal[s.level]; ctx.fillStyle = c; ctx.fillRect(x(s.t), sy + row * (strip / 2 + 2), Math.max(1, x(n) - x(s.t) + .5), strip / 2); }
+  });
+  // marks
+  ctx.setLineDash([2, 3]); ctx.strokeStyle = "#9aa5b1"; ctx.lineWidth = 1; ctx.fillStyle = "#6b7785"; ctx.textAlign = "center";
+  M.forEach((m, i) => { ctx.beginPath(); ctx.moveTo(x(m.t), PAD.t); ctx.lineTo(x(m.t), sy + strip + 4); ctx.stroke(); });
+  ctx.setLineDash([]);
+  M.forEach((m, i) => { const cx = x(m.t) + 8; ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(cx, PAD.t + 10, 9, 0, 7); ctx.fill(); ctx.strokeStyle = "#9aa5b1"; ctx.stroke(); ctx.fillStyle = "#1f2933"; ctx.fillText(i + 1, cx, PAD.t + 14); });
+  // cursor
+  ctx.strokeStyle = "#d64545"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x(cursor), PAD.t); ctx.lineTo(x(cursor), sy + strip + 4); ctx.stroke();
+  chart._x = x; chart._plot = [PAD.l, plotW];
+}
+chart.addEventListener("click", e => { const r = chart.getBoundingClientRect(), px = e.clientX - r.left; seek(Math.min(T, Math.max(0, (px - PAD.l) / (W - PAD.l - PAD.r) * T))); });
+
+// panels
+function updatePanels() {
+  const s = S[idxAt(S, cursor)];
+  const ph = $("phase"); ph.textContent = PHASE_TEXT[s.phase] + "（" + s.phase + "）"; ph.style.background = COLORS[s.phase];
+  $("level").textContent = LEVEL_TEXT[s.level]; $("level").style.color = s.level ? LEVEL_COLORS[s.level] : "#6b7785";
+  $("reason").textContent = s.reason ? "reason：" + s.reason : "";
+  $("gy").textContent = fmt(s.g && s.g[0]); $("gp").textContent = fmt(s.g && s.g[1]);
+  $("cy").textContent = fmt(s.c && s.c[0]); $("cp").textContent = fmt(s.c && s.c[1]);
+  $("my").textContent = fmt(s.m && s.m[0]); $("mp").textContent = fmt(s.m && s.m[1]);
+  const mi = M.length ? idxAt(M, cursor) : -1, mk = cursor >= (M[0] ? M[0].t : 0) ? M[mi] : null;
+  $("note").innerHTML = mk ? "<b>" + (mi + 1) + ". " + mk.title + "</b>" + mk.note : "<b>准备</b>点播放开始。";
+  M.forEach((m, i) => $("ch" + i).classList.toggle("on", mk && i === mi));
+  // layer arrows from frames in the last 120 ms
+  const fi = idxAt(F, cursor); let tx = false, rx = false;
+  for (let i = fi; i >= 0 && F[i].t > cursor - .12; i--) { if (F[i].dir === "TX") tx = true; else rx = true; }
+  const cmd = F.slice(Math.max(0, fi - 30), fi + 1).some(f => f.dir === "TX" && !f.query && f.t > cursor - .12);
+  $("a23").setAttribute("class", "arrow" + (tx ? " tx" : rx ? " rx" : ""));
+  $("a12").setAttribute("class", "arrow" + (cmd ? " tx" : ""));
+  $("a01").setAttribute("class", "arrow" + (s.phase !== "off" && s.phase !== "fault" ? " rx" : ""));
+  ["L0", "L1", "L2", "L3"].forEach((id, i) => $(id).classList.toggle("hot", (i === 1 && s.phase !== "off") || (i === 2 && tx) || (i === 3 && (tx || rx))));
+  // frame table
+  const showq = $("showq").checked, rows = []; 
+  for (let i = fi; i >= 0 && rows.length < 12; i--) { const f = F[i]; if (f.t > cursor) continue; if (!showq && f.query) continue; rows.push([i, f]); }
+  $("frames").innerHTML = rows.map(([i, f], n) => `<tr class="row ${n === 0 ? "last" : ""}" data-t="${f.t}"><td>${f.t.toFixed(3)} s</td><td class="${f.dir === "TX" ? "tx-t" : "rx-t"}">${f.dir}</td><td>${f.axis}</td><td>${f.text}</td><td class="hex">${f.hex}</td></tr>`).join("") || `<tr><td colspan="5" style="color:#6b7785">此前没有（或已被隐藏）命令帧</td></tr>`;
+}
+$("frames").addEventListener("click", e => { const tr = e.target.closest("tr[data-t]"); if (tr) seek(+tr.dataset.t); });
+$("showq").onchange = updatePanels;
+
+function render() { $("scrub").value = Math.round(cursor / T * 1000); $("clock").textContent = cursor.toFixed(1) + " / " + T.toFixed(1) + " s"; draw(); updatePanels(); }
+function seek(t) { cursor = Math.min(T, Math.max(0, t)); render(); }
+$("scrub").oninput = e => seek(+e.target.value / 1000 * T);
+$("play").onclick = () => { playing = !playing; if (playing && cursor >= T) cursor = 0; $("play").textContent = playing ? "⏸ 暂停" : "▶ 播放"; last = performance.now(); if (playing) requestAnimationFrame(tick); };
+function tick(now) { if (!playing) return; cursor += (now - last) / 1000 * +$("speed").value; last = now; if (cursor >= T) { cursor = T; playing = false; $("play").textContent = "▶ 播放"; } render(); if (playing) requestAnimationFrame(tick); }
+window.addEventListener("resize", resize);
+window.addEventListener("keydown", e => { if (e.code === "Space") { e.preventDefault(); $("play").click(); } if (e.code === "ArrowRight") seek(cursor + 0.5); if (e.code === "ArrowLeft") seek(cursor - 0.5); });
+const hash = location.hash.match(/t=([\d.]+)/); if (hash) cursor = Math.min(T, +hash[1]);
+resize(); render();
+</script>
+</body>
+</html>

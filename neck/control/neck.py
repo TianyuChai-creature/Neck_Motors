@@ -178,6 +178,7 @@ class Neck:
             fail(f"zero_verify_failed: measured={after}")
         if holding:
             self._command = ZERO
+            self._requested = None          # an old target means nothing in the new coordinates
             self._synced = False
             self._sup.forget()
             self._last_tick = time.monotonic()

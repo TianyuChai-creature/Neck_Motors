@@ -19,6 +19,8 @@ class Axis:
     gains: dict = field(default_factory=dict)
     zeros: int = 0
     saves: int = 0
+    target: float | None = None     # only used when the bus has a lag
+    stamp: float = 0.0
 
 
 def xor(data: bytes) -> int:
@@ -32,17 +34,20 @@ class Bus:
     """`path` is the device to hand to the code under test.
 
     Options: echo, fragmented, noise, corrupt (decorate each reply), silent (IDs that never
-    answer), delay (seconds before replying). Recorded: frames, times, errors, axes.
+    answer), delay (seconds before replying), lag (time constant in seconds: reported angles
+    approach the commanded one like a motor would; 0 means they jump there). Recorded: frames,
+    times, errors, axes.
     """
 
     GAINS = {0x0F: "speed_kp", 0x10: "speed_ki", 0x11: "pos_kp", 0x12: "pos_ki"}
 
     def __init__(self, positions=None, *, echo=False, fragmented=False, noise=False,
-                 corrupt=False, delay=0.0):
+                 corrupt=False, delay=0.0, lag=0.0):
         positions = positions or {1: 12.3, 2: -4.5}
         self.axes = {addr: Axis(deg) for addr, deg in positions.items()}
         self.echo, self.fragmented, self.noise, self.corrupt, self.delay = (
             echo, fragmented, noise, corrupt, delay)
+        self.lag = lag
         self.silent: set[int] = set()
         self.frames: list[bytes] = []
         self.times: list[float] = []
@@ -98,7 +103,9 @@ class Bus:
         if func == 0x06:
             axis.enabled = True
         elif func == 0x05:
+            self._advance(axis)
             axis.enabled = False
+            axis.target = None          # without torque the motor stays where it is
         elif func == 0x00:
             axis.mode = int.from_bytes(data, "big")
         elif func == 0x01:
@@ -108,19 +115,34 @@ class Bus:
         elif func in self.GAINS:
             axis.gains[self.GAINS[func]] = int.from_bytes(data, "big")
         elif func == 0x0A:
+            self._advance(axis)
             axis.deg = 0.0
+            axis.target = 0.0 if axis.target is not None else None
             axis.zeros += 1
         elif func == 0x08:
             axis.saves += 1
         elif func == 0x03 and axis.enabled:
             tenths = int.from_bytes(data, "big")
-            axis.deg = (tenths - 3600 if tenths > 1800 else tenths) / 10
+            target = (tenths - 3600 if tenths > 1800 else tenths) / 10
+            if self.lag:
+                self._advance(axis)
+                axis.target = target
+            else:
+                axis.deg = target
         elif func == 0x0E and addr not in self.silent:
             self._reply(frame, addr, axis)
+
+    def _advance(self, axis: Axis) -> None:
+        """Move the reported angle towards the commanded one (first order, `lag` seconds)."""
+        now = time.monotonic()
+        if self.lag and axis.target is not None:
+            axis.deg += (axis.target - axis.deg) * (1 - 0.5 ** ((now - axis.stamp) / self.lag))
+        axis.stamp = now
 
     def _reply(self, query: bytes, addr: int, axis: Axis) -> None:
         if self.delay:
             time.sleep(self.delay)
+        self._advance(axis)
         body = bytes((0x7A, addr, 2)) + (round(axis.deg * 10) % 3600).to_bytes(4, "big")
         reply = body + bytes((xor(body), 0x7B))
         prefix = query if self.echo else b""

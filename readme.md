@@ -37,6 +37,12 @@ python3 tools/tune.py --axis pitch --speed-kp 10 --speed-ki 4 --pos-kp 40 --pos-
 
 **写零位**：先用滑条把两轴调到理想位置，等它保持稳定，再点“写零位（两轴）”并确认；也可以失能后用手拨到位再写。两轴一起写入并保存到 flash，写完两轴读数应为 0°，滑条同步回 0。代码里是 `neck.set_zero()`（只在失能或保持稳定时可用）。第一次真机使用请先偏离零位约 2° 试。日志写入 `logs/`（原始串口收发 `.log`，故障 `.fault.json`，关闭 `.close.json`）。
 
+## 看懂它是怎么搭的
+
+- [`docs/回放.html`](docs/回放.html)：**双击用浏览器打开**。一次完整运行的回放（使能回零、跟随、过期、反馈中断降级、写零位、故障），同步显示角度曲线、phase/level 色条、层间数据流和每一帧串口字节。
+- [`docs/架构图.md`](docs/架构图.md)：分层依赖、tick 时序、使能、写零位、状态机、保护分级（Mermaid，GitHub/Notion 直接渲染）。
+- 重新生成回放：`python3 tools/replay.py`（约 13 秒，不需要硬件）。
+
 ## 默认参数
 
 | 项 | yaw（ID 1） | pitch（ID 2） |
@@ -59,9 +65,9 @@ python3 -m unittest discover -s tests -t .      # 不需要硬件，也不需要
 ```
 neck/driver/   protocol.py port.py motor.py device.py types.py     层 1：硬件
 neck/control/  trajectory.py supervisor.py neck.py                 层 2：安全运动
-tools/         ui.py tune.py requirements.txt                      操作员工具（只依赖 neck）
+tools/         ui.py tune.py replay.py requirements.txt            操作员工具（ui/tune 只依赖 neck）
 tests/         假总线 bus.py、FakeDriver fakes.py、各层测试
-docs/          设计说明.md、电机手册 PDF、archive/（旧版审查与调试记录）
+docs/          设计说明.md、架构图.md、回放.html、电机手册 PDF、archive/（旧版记录）
 agent.md       智能体角色、现场参数与变更记录
 ```
 

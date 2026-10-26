@@ -399,6 +399,7 @@ class ZeroTests(NeckCase):
         self.assertEqual((self.driver.zeros, self.driver.saves, self.driver.disables), (1, 1, 0))
         self.assertEqual((snap.phase, snap.reason), ("hold", "zero_saved"))
         self.assertEqual(snap.command, Pose(0, 0))
+        self.assertIsNone(snap.target)
         head.set_target(10, 5)
         for _ in range(60):
             snap = self.tick()

@@ -19,16 +19,17 @@ class FakeDriver:
         self.follow = True
         self.sent: list[tuple[float | None, float | None]] = []
         self.reads = self.disables = 0
+        self.port_closed = False
         self.read_error = self.set_error = self.enable_error = self.disable_error = False
 
     def _usable(self):
-        if self.state in (DriverState.CLOSED, DriverState.UNKNOWN):
+        if self.port_closed:
             raise DriverError(f"driver is {self.state.value}")
 
     def enable(self, yaw: float, pitch: float) -> None:
         self._usable()
-        if self.state is DriverState.ARMED:
-            raise DriverError("already armed")
+        if self.state is not DriverState.OPEN:
+            raise DriverError(f"driver is {self.state.value}")
         pose = Pose(finite(yaw, "yaw"), finite(pitch, "pitch"))
         if self.enable_error:
             raise DriverError("enable failed")
@@ -66,8 +67,11 @@ class FakeDriver:
         self.state = DriverState.OPEN
 
     def close(self) -> None:
-        if self.state is DriverState.CLOSED:
+        if self.port_closed:
+            if self.state is DriverState.UNKNOWN:
+                raise DriverError("hardware state unknown")
             return
+        self.port_closed = True
         if self.state in (DriverState.ARMED, DriverState.UNKNOWN):
             self.disables += 1
             if self.disable_error:

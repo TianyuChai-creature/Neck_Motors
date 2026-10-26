@@ -28,7 +28,7 @@ chmod +x f32c-neck-ui-linux-x86_64 && ./f32c-neck-ui-linux-x86_64 [/dev/ttyACM0]
 chmod +x F32C-Neck-UI-x86_64.AppImage && ./F32C-Neck-UI-x86_64.AppImage             # 无 FUSE 时加 --appimage-extract-and-run
 ```
 
-- 在 Ubuntu 22.04 级别（glibc 2.34）构建，更老的发行版可能跑不起来；需要桌面环境（X11/Wayland）和串口权限（`dialout` 组）。
+- 在 glibc 2.34 的系统上构建，glibc 更老的发行版（如 Ubuntu 20.04）跑不起来；需要桌面环境（X11/Wayland）和串口权限（`dialout` 组）。
 - 打不开串口会弹窗提示并以非零码退出；日志写到 `~/f32c_logs/`。
 - **只做过假总线冒烟测试，未在真机和真实显示器上验证。**
 - Windows 暂无 .exe：驱动层用 `termios`，Windows 没有串口支持，需先补 Windows 串口层。

@@ -229,5 +229,63 @@ class OpenTests(unittest.TestCase):
                 self.assertEqual(candidates(), [str(link)])
 
 
+class ZeroTests(DeviceCase):
+    def kinds(self):
+        time.sleep(0.03)
+        return frame_kinds(self.bus)
+
+    def test_off_zero_then_save_frames(self):
+        d = self.driver()
+        d.set_zero()
+        d.save()
+        self.assertEqual(self.kinds(), [(1, 0x0A), (2, 0x0A), (1, 8), (2, 8)])
+        self.assertEqual([a.zeros for a in self.bus.axes.values()], [1, 1])
+        self.assertEqual([a.saves for a in self.bus.axes.values()], [1, 1])
+
+    def test_armed_zero_re_aims_each_motor_right_after_its_own_zero_frame(self):
+        d = self.driver()
+        d.enable(INITIAL.yaw, INITIAL.pitch)
+        before = len(self.bus.frames)
+        d.set_zero()
+        kinds = self.kinds()[before:]
+        self.assertEqual(kinds, [(1, 0x0A), (1, 3), (2, 0x0A), (2, 3)])
+        self.assertEqual(self.bus.frames[before + 1][3:5], b"\x00\x00")      # aimed at 0.0
+        self.assertEqual(self.bus.frames[before + 3][3:5], b"\x00\x00")
+
+    def test_armed_zero_failure_disables_both_motors(self):
+        d = self.driver()
+        d.enable(INITIAL.yaw, INITIAL.pitch)
+        with self.failing_writes(lambda f: f[1] == 2 and f[2] == 0x0A):
+            with self.assertRaisesRegex(DriverError, "disable requests sent"):
+                d.set_zero()
+        self.assertIs(d.state, DriverState.OPEN)
+        self.assertFalse(any(a.enabled for a in self.bus.axes.values()))
+
+    def test_armed_zero_failure_with_failed_disable_is_unknown(self):
+        d = self.driver()
+        d.enable(INITIAL.yaw, INITIAL.pitch)
+        with self.failing_writes(lambda f: f[2] in (0x0A, 0x05)):
+            with self.assertRaises(DriverError):
+                d.set_zero()
+        self.assertIs(d.state, DriverState.UNKNOWN)
+        for call in (d.set_zero, d.save):
+            with self.assertRaises(DriverError):
+                call()
+
+    def test_open_zero_failure_does_not_touch_torque_state(self):
+        d = self.driver()
+        with self.failing_writes(lambda f: f[2] == 0x0A):
+            with self.assertRaisesRegex(DriverError, "partly zeroed"):
+                d.set_zero()
+        self.assertIs(d.state, DriverState.OPEN)
+
+    def test_save_failure_is_reported(self):
+        d = self.driver()
+        with self.failing_writes(lambda f: f[2] == 8):
+            with self.assertRaises(DriverError):
+                d.save()
+        self.assertIs(d.state, DriverState.OPEN)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -37,6 +37,16 @@ def disable(addr: int) -> bytes:
     return pack(addr, 0x05)
 
 
+def save(addr: int) -> bytes:
+    """Write the motor's current parameters to flash (manual 4.2.8)."""
+    return pack(addr, 0x08)
+
+
+def set_zero(addr: int) -> bytes:
+    """The current single-turn angle becomes 0 degrees, kept across power cycles (manual 4.2.10)."""
+    return pack(addr, 0x0A)
+
+
 def mode_single_turn_direct(addr: int) -> bytes:
     return pack(addr, 0x00, _u16(4))
 

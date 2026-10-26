@@ -17,6 +17,8 @@ class FrameTests(unittest.TestCase):
         golden = {
             "enable": (p.enable(2), "7A 02 06 7E 7B"),
             "disable": (p.disable(2), "7A 02 05 7D 7B"),
+            "save": (p.save(2), "7A 02 08 70 7B"),
+            "set zero": (p.set_zero(2), "7A 02 0A 72 7B"),
             "mode direct": (p.mode_single_turn_direct(2), "7A 02 00 00 04 7C 7B"),
             "speed kp": (p.speed_kp(2, 10), "7A 02 0F 00 0A 7D 7B"),
             "speed ki": (p.speed_ki(2, 10), "7A 02 10 00 0A 62 7B"),

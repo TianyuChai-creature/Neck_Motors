@@ -17,6 +17,8 @@ class Axis:
     rpm: int | None = None
     accel: int | None = None
     gains: dict = field(default_factory=dict)
+    zeros: int = 0
+    saves: int = 0
 
 
 def xor(data: bytes) -> int:
@@ -105,6 +107,11 @@ class Bus:
             axis.accel = int.from_bytes(data, "big")
         elif func in self.GAINS:
             axis.gains[self.GAINS[func]] = int.from_bytes(data, "big")
+        elif func == 0x0A:
+            axis.deg = 0.0
+            axis.zeros += 1
+        elif func == 0x08:
+            axis.saves += 1
         elif func == 0x03 and axis.enabled:
             tenths = int.from_bytes(data, "big")
             axis.deg = (tenths - 3600 if tenths > 1800 else tenths) / 10

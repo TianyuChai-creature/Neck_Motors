@@ -73,3 +73,28 @@ class DriverContract:
         for call in (lambda: d.read(0.1), lambda: d.enable(0, 0), lambda: d.set(0, 0), d.disable):
             with self.assertRaises(DriverError):
                 call()
+
+    def test_zero_while_off_makes_the_held_pose_zero_and_save_is_allowed(self):
+        d = self.make()
+        d.set_zero()
+        self.assertPose(d.read(0.1), 0.0, 0.0)
+        d.save()
+        self.assertIs(d.state, DriverState.OPEN)
+
+    def test_zero_while_armed_keeps_torque_and_aims_both_motors_at_the_new_zero(self):
+        d = self.make()
+        d.enable(INITIAL.yaw, INITIAL.pitch)
+        d.set_zero()
+        self.assertIs(d.state, DriverState.ARMED)
+        self.assertPose(d.read(0.1), 0.0, 0.0)
+        d.set(5.0, None)
+        self.assertPose(d.read(0.1), 5.0, 0.0)
+        d.save()
+        self.assertIs(d.state, DriverState.ARMED)
+
+    def test_zero_and_save_need_an_open_port(self):
+        d = self.make()
+        d.close()
+        for call in (d.set_zero, d.save):
+            with self.assertRaises(DriverError):
+                call()

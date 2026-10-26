@@ -94,10 +94,13 @@ class Panel(QWidget):
         self.btn_en = QPushButton("使能并到零位")
         self.btn_dis = QPushButton("失能")
         self.btn_home = QPushButton("到 0°")
+        self.btn_zero = QPushButton("写零位（两轴）")
+        self.btn_zero.setToolTip("把当前位置写成电机的 0° 并保存到 flash，不可撤销。仅在失能或保持状态可用")
         self.btn_en.clicked.connect(self.enable)
         self.btn_dis.clicked.connect(self.disable)
         self.btn_home.clicked.connect(self.go_zero)
-        for button in (self.btn_en, self.btn_dis, self.btn_home):
+        self.btn_zero.clicked.connect(self.write_zero)
+        for button in (self.btn_en, self.btn_dis, self.btn_home, self.btn_zero):
             buttons.addWidget(button)
         layout.addLayout(buttons)
         self.yaw = AxisRow("yaw", self.send)
@@ -148,6 +151,34 @@ class Panel(QWidget):
             self.yaw.set_deg(snapshot.target.yaw)
             self.pitch.set_deg(snapshot.target.pitch)
 
+    def confirm_zero(self, text: str) -> bool:
+        answer = QMessageBox.question(self, "写零位", text, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                      QMessageBox.StandardButton.No)
+        return answer == QMessageBox.StandardButton.Yes
+
+    def write_zero(self) -> None:
+        """The position the neck holds now becomes 0° on both motors, saved to flash."""
+        try:
+            pose = self.neck.driver.read()
+        except (DriverError, ValueError) as exc:
+            self.status.setText("无法读取当前角度，未写零位：" + str(exc))
+            return
+        if not self.confirm_zero(f"把当前位置写成 0° 并保存到电机 flash（不可撤销）。\n"
+                                 f"当前实测：yaw {pose.yaw:.1f}°，pitch {pose.pitch:.1f}°"):
+            return
+        try:
+            snapshot = self.neck.set_zero()
+        except NeckError as exc:
+            if self.neck.phase == "fault":
+                self.fault(exc.reason)
+            else:
+                self.status.setText("写零位未完成：" + exc.reason)
+            return
+        self.yaw.set_deg(0)
+        self.pitch.set_deg(0)
+        self.show_state(snapshot)
+        self.status.setText("零位已写入并保存（两轴现为 0°）")
+
     def disable(self) -> bool:
         try:
             self.neck.disable()
@@ -160,6 +191,10 @@ class Panel(QWidget):
     # ---- periodic --------------------------------------------------------------------------
 
     def step_targets(self) -> None:
+        self._step()
+        self.btn_zero.setEnabled(self.neck.phase in ("off", "hold"))
+
+    def _step(self) -> None:
         if not self.neck.enabled:
             self.poll_motors()
             return

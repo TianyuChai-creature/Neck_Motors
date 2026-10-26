@@ -15,7 +15,7 @@ def axes_written(driver):
     return {axis for y, p in driver.sent for axis, v in (("yaw", y), ("pitch", p)) if v is not None}
 
 
-class NeckTests(unittest.TestCase):
+class NeckCase(unittest.TestCase):
     def setUp(self):
         self.now = 10.
         clock = patch("neck.control.neck.time.monotonic", side_effect=lambda: self.now)
@@ -39,6 +39,8 @@ class NeckTests(unittest.TestCase):
         self.now += dt
         return self.head.tick(**kwargs)
 
+
+class NeckTests(NeckCase):
     def test_pitch_target_clips_and_initial_feedback_above_45_is_accepted(self):
         head = self.neck(Pose(359.9, 45.2))
         self.assertAlmostEqual(head.snapshot.measured.yaw, -.1)
@@ -378,6 +380,95 @@ class NeckTests(unittest.TestCase):
         with self.assertRaises(NeckError): head.close()
         self.assertEqual(head.snapshot.phase, "fault")
         self.assertIs(self.driver.state, DriverState.UNKNOWN)
+
+
+class ZeroTests(NeckCase):
+    def settled(self, initial=Pose(0, 0)):
+        head = self.neck(initial)
+        for _ in range(500):
+            if self.tick().reason == "target_reached":
+                break
+        self.assertEqual(head.snapshot.phase, "hold")
+        return head
+
+    def test_zero_while_holding_keeps_torque_and_following_resumes_from_the_new_zero(self):
+        head = self.settled(Pose(3, 2))
+        self.driver.measured = self.driver.command = Pose(2.4, -1.8)     # the operator parked it here
+        head._command = Pose(2.4, -1.8)
+        snap = head.set_zero()
+        self.assertEqual((self.driver.zeros, self.driver.saves, self.driver.disables), (1, 1, 0))
+        self.assertEqual((snap.phase, snap.reason), ("hold", "zero_saved"))
+        self.assertEqual(snap.command, Pose(0, 0))
+        head.set_target(10, 5)
+        for _ in range(60):
+            snap = self.tick()
+        self.assertTrue(head.enabled)
+        self.assertGreater(snap.measured.yaw, 3)       # moved on from the new zero, no jump back
+        self.assertLessEqual(snap.measured.yaw, 10)
+
+    def test_zero_while_off_works_without_torque(self):
+        head = self.neck(Pose(5, -3))
+        head.disable()
+        snap = head.set_zero()
+        self.assertEqual((self.driver.zeros, self.driver.saves), (1, 1))
+        self.assertEqual(snap.phase, "off")
+
+    def test_zero_is_refused_unless_off_or_holding_still(self):
+        head = self.neck(Pose(5, 5))
+        for phase_action in (lambda: None, lambda: head.set_target(1, 1)):
+            phase_action()
+            with self.assertRaisesRegex(NeckError, "off or holding"):
+                head.set_zero()
+        self.assertEqual(self.driver.zeros, 0)
+        head = self.settled()
+        self.driver.follow = False
+        self.driver.measured = Pose(5, 0)            # held pose not where the command is
+        with self.assertRaisesRegex(NeckError, "not settled"):
+            head.set_zero()
+        self.assertEqual(self.driver.zeros, 0)
+        self.assertTrue(head.enabled)
+
+    def test_unreadable_pose_refuses_without_changing_anything(self):
+        head = self.settled()
+        self.driver.read_error = True
+        with self.assertRaisesRegex(NeckError, "cannot read"):
+            head.set_zero()
+        self.assertEqual(self.driver.zeros, 0)
+        self.assertEqual(head.snapshot.phase, "hold")
+
+    def test_zero_that_does_not_show_in_feedback_faults_and_disables(self):
+        head = self.settled(Pose(3, 2))
+        self.driver.zero_no_effect = True
+        self.driver.follow = False
+        self.driver.measured = Pose(3, 2)
+        head._command = Pose(3, 2)
+        with self.assertRaisesRegex(NeckError, "zero_verify_failed"):
+            head.set_zero()
+        self.assertEqual(head.snapshot.phase, "fault")
+        self.assertEqual(self.driver.saves, 0)
+        self.assertEqual(self.driver.state, DriverState.OPEN)
+
+    def test_zero_write_failure_while_holding_faults_but_off_does_not(self):
+        head = self.settled()
+        self.driver.zero_error = True
+        with self.assertRaisesRegex(NeckError, "zero_failed"):
+            head.set_zero()
+        self.assertEqual(head.snapshot.phase, "fault")
+        self.assertEqual(self.driver.state, DriverState.OPEN)
+        head.reset_fault()
+        self.assertEqual(head.snapshot.phase, "off")
+        with self.assertRaisesRegex(NeckError, "zero_failed"):
+            head.set_zero()
+        self.assertEqual(head.snapshot.phase, "off")
+
+    def test_failed_save_keeps_holding_and_says_so(self):
+        head = self.settled()
+        self.driver.save_error = True
+        with self.assertRaisesRegex(NeckError, "not saved"):
+            head.set_zero()
+        self.assertEqual(head.snapshot.phase, "hold")
+        self.assertEqual(head.snapshot.reason, "zero_not_saved")
+        self.assertTrue(head.enabled)
 
 
 if __name__ == "__main__":

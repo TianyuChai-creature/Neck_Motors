@@ -92,6 +92,36 @@ class Driver:
         if pitch is not None:
             self._pitch.set_angle(pitch)
 
+    def set_zero(self) -> None:
+        """The pose both motors hold now becomes (0, 0). Needs OPEN or ARMED.
+
+        Torque stays as it is. While ARMED each motor is re-aimed at 0 in the very next frame
+        after its zero frame, so it does not chase its old target; a failure then disables both.
+        The new zero is only guaranteed across power cycles after save()."""
+        self._require_port()
+        if self.state is DriverState.UNKNOWN:
+            raise DriverError("hardware state unknown; disable must succeed first")
+        armed = self.state is DriverState.ARMED
+        try:
+            for motor in (self._yaw, self._pitch):
+                motor.set_zero()
+                if armed:
+                    motor.set_angle(0.0)
+        except DriverError as exc:
+            message = f"zeroing failed ({exc}); the motors may be only partly zeroed"
+            if armed:
+                self._disable_both()            # raises, state UNKNOWN, if this fails too
+                message += "; disable requests sent"
+            raise DriverError(message) from exc
+
+    def save(self) -> None:
+        """Write both motors' parameters (zero, acceleration, ...) to flash. OPEN or ARMED."""
+        self._require_port()
+        if self.state is DriverState.UNKNOWN:
+            raise DriverError("hardware state unknown; disable must succeed first")
+        for motor in (self._yaw, self._pitch):
+            motor.save()
+
     def read(self, timeout: float = 0.1) -> Pose:
         """Measured angles of both motors within one shared deadline."""
         timeout = timeout_ok(timeout)

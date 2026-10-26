@@ -21,6 +21,8 @@ class FakeDriver:
         self.reads = self.disables = 0
         self.port_closed = False
         self.read_error = self.set_error = self.enable_error = self.disable_error = False
+        self.zero_error = self.save_error = self.zero_no_effect = False
+        self.zeros = self.saves = 0
 
     def _usable(self):
         if self.port_closed:
@@ -47,6 +49,31 @@ class FakeDriver:
         self.command = Pose(self.command.yaw if y is None else y,
                             self.command.pitch if p is None else p)
         self.sent.append((y, p))
+
+    def _unknown(self):
+        if self.state is DriverState.UNKNOWN:
+            raise DriverError("hardware state unknown; disable must succeed first")
+
+    def set_zero(self) -> None:
+        self._usable()
+        self._unknown()
+        armed = self.state is DriverState.ARMED
+        if self.zero_error:
+            if armed:
+                self.disable()                  # like the real driver: failure disables both
+            raise DriverError("zeroing failed")
+        self.zeros += 1
+        if not self.zero_no_effect:
+            self.measured = Pose(0.0, 0.0)
+        if armed:
+            self.command = Pose(0.0, 0.0)
+
+    def save(self) -> None:
+        self._usable()
+        self._unknown()
+        if self.save_error:
+            raise DriverError("save failed")
+        self.saves += 1
 
     def read(self, timeout: float = 0.1) -> Pose:
         self._usable()

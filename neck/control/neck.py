@@ -20,6 +20,7 @@ from .supervisor import AXES, Fault, Finding, ProtectionConfig, Supervisor
 from .trajectory import Trajectory, TrajectoryConfig, TrajectoryError, delta, wrap
 
 ZERO = Pose(0.0, 0.0)       # the stored zero pose that enable() returns to
+ZERO_CHECK_DEG = 0.5        # after set_zero() both axes must report this close to 0
 _UNSAFE = (DriverState.ARMED, DriverState.UNKNOWN)
 
 
@@ -141,6 +142,52 @@ class Neck:
         """Stop following; keep reading and watching."""
         self._require_enabled()
         return self._stop("operator_hold", "hold")
+
+    def set_zero(self) -> Snapshot:
+        """Make the pose the neck holds now the stored zero (0, 0) and save it to flash.
+
+        Only while off (torque off, posed by hand) or holding still; torque is not interrupted.
+        If the motors do not report ~0 afterwards (or the zero frames fail) while enabled, the
+        neck faults and disables; a failed save alone leaves the zero set but unsaved."""
+        if self.phase not in ("off", "hold"):
+            raise NeckError("zeroing needs the neck off or holding still", self.snapshot)
+        holding = self.phase == "hold"
+
+        def fail(reason: str):
+            if holding:
+                self._fault(reason)
+            raise NeckError(reason, self.snapshot)
+
+        try:
+            pose = self._read()
+        except DriverError as exc:
+            raise NeckError(f"cannot read the pose: {exc}", self.snapshot) from exc
+        if holding:
+            off = delta(pose, self._command)
+            if max(abs(off.yaw), abs(off.pitch)) > self.protection.settle_tolerance_deg:
+                raise NeckError(f"not settled: measured={pose}, command={self._command}", self.snapshot)
+        try:
+            self.driver.set_zero()
+        except DriverError as exc:
+            fail(f"zero_failed: {exc}")
+        try:
+            after = self._read()
+        except DriverError as exc:
+            fail(f"zero_verify_failed: {exc}")
+        if max(abs(after.yaw), abs(after.pitch)) > ZERO_CHECK_DEG:
+            fail(f"zero_verify_failed: measured={after}")
+        if holding:
+            self._command = ZERO
+            self._synced = False
+            self._sup.forget()
+            self._last_tick = time.monotonic()
+        try:
+            self.driver.save()
+        except DriverError as exc:
+            self._reason = "zero_not_saved"
+            raise NeckError(f"zero is set but not saved: {exc}", self.snapshot) from exc
+        self._reason = "zero_saved"
+        return self.snapshot
 
     def disable(self) -> None:
         if self.driver.state in _UNSAFE:

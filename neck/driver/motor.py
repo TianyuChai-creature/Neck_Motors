@@ -30,6 +30,12 @@ class Motor:
     def disable(self) -> None:
         self._send(p.disable(self.addr))
 
+    def set_zero(self) -> None:
+        self._send(p.set_zero(self.addr))
+
+    def save(self) -> None:
+        self._send(p.save(self.addr))
+
     def set_gains(self, gains: Gains) -> None:
         self._send(p.speed_kp(self.addr, gains.speed_kp))
         self._send(p.speed_ki(self.addr, gains.speed_ki))

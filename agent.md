@@ -4,7 +4,7 @@
 
 | 项 | 值 |
 | --- | --- |
-| 版本 | v4.0 |
+| 版本 | v4.1 |
 | 状态 | 活文档，施工中实时维护 |
 | 最近更新 | 2026-10-26 |
 | 电机手册 | `docs/F32C无刷电机使用手册-2026-07-21.pdf` |
@@ -296,7 +296,7 @@ with Neck(Driver.open()) as neck:
 - 两台电机共用一条 TTL UART 总线；yaw=`ID 1`，pitch=`ID 2`；没有合并帧，没有 ACK，写成功只代表串口写入成功。
 - `Driver.set()` 按 yaw、pitch 顺序各发一帧单圈直通位置帧（`None` 表示该轴不动）；`read()` 两轴共享一个截止时间。
 - `enable()`：失能下发全部 PI → 逐轴使能 → 选 `0004` 单圈直通 → 下发速度/加速度/初始目标（实测位姿）。任何一步失败都回滚并失能，失能也失败则 `DriverState.UNKNOWN`。
-- `Neck.enable()` 在使能后用轨迹回到**已存零位** yaw=0°、pitch=0°；零位由用户手动写入 flash，仓库不提供置零/保存。
+- `Neck.enable()` 在使能后用轨迹回到**已存零位** yaw=0°、pitch=0°；零位在电机 flash。`Neck.set_zero()` 把当前位置写成两轴零点并保存（失能或保持稳定时可用；使能时零点帧后立刻改瞄 0°，读回须在 ±0.5° 内，否则失能），属人闸，由用户在 UI 点按。
 - 默认限位 pitch −180°…45°（只截断新目标，不判断反馈，初始超限不诊断）、yaw ±60°；软件 90°/s、720°/s²。
 - 分级保护：level 1 扰动（本 tick 暂停）→ level 2 降级（保持使能，拉回指令，等稳定）→ level 3 故障（失能并锁存，需 `reset_fault()`）。只以实测到位判断移动完成，不因误差大小直接失能。
 
@@ -390,3 +390,4 @@ python3 tools/ui.py [/dev/ttyACM0]
 
 | 2026-10-26 | v3.4 | 分支 `feat/graded-protection`：分级保护 level 1/2/3、提速（电机 15 RPM、加速度 2，软件 90°/s、720°/s²）、使能后回已存零位、修复调试整改项；见 `docs/archive/调试整改_2026-10-26.md`。仅离线测试，未通电。 |
 | 2026-10-26 | v4.0 | 分支 `refactor/two-layer`：重构为 `neck.driver`（硬件）+ `neck.control`（Neck/Trajectory/Supervisor）两层，纯 Python 标准库；删除 C++ SDK、C ABI、ZED 相机、旧 `f32c` Python 包与 wheel；UI/整定脚本迁至 `tools/` 且只依赖 `neck`；旧文档归档到 `docs/archive/`，新增 `docs/设计说明.md`。回溯点 tag `pre-refactor`（11985db）。Driver 角度折叠到 −180…180，角度编码四舍五入。离线 116 项测试通过，**未通电实测**；提速与直通模式 speed/accel 是否生效待台架。 |
+| 2026-10-26 | v4.1 | 补回写零位：`Driver.set_zero()/save()`（手册 4.2.10 帧 `7A addr 0A`、4.2.8 帧 `7A addr 08`，黄金向量已测）、`Neck.set_zero()`（两轴一起，使能保持时零点帧后立即改瞄 0°，读回校验，失败失能）、`tools/ui.py` “写零位（两轴）”按钮带确认框。离线 139 项测试通过，**未通电**；写零瞬间是否会冲、保存帧是否连带写入加速度，待台架确认。 |

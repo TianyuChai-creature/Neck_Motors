@@ -58,5 +58,27 @@ class StackTests(unittest.TestCase):
         neck.close()
 
 
+    def test_zero_here_while_holding_then_follow_on_the_real_driver(self):
+        driver = Driver.open(DriverConfig(port=self.bus.path))
+        neck = Neck(driver)
+        neck.enable()
+        self.run_until(neck, lambda s: s.reason == "target_reached")
+        for axis, deg in ((1, 2.0), (2, -1.5)):         # the operator parks the neck here
+            self.bus.axes[axis].deg = deg
+        neck._command = type(neck.snapshot.command)(2.0, -1.5)
+        before = len(self.bus.frames)
+        snapshot = neck.set_zero()
+        self.assertEqual((snapshot.phase, snapshot.reason), ("hold", "zero_saved"))
+        sent = [(f[1], f[2]) for f in self.bus.frames[before:] if f[2] != 0x0E]   # without the queries
+        self.assertEqual(sent[:4], [(1, 0x0A), (1, 3), (2, 0x0A), (2, 3)])
+        self.assertEqual(sent[-2:], [(1, 8), (2, 8)])
+        self.assertTrue(all(axis.enabled for axis in self.bus.axes.values()))
+        self.assertAlmostEqual(self.bus.axes[1].deg, 0, delta=0.1)
+        neck.set_target(10, 5)
+        self.run_until(neck, lambda s: abs(s.measured.yaw - 10) < 1.5 and abs(s.measured.pitch - 5) < 1.5)
+        neck.close()
+        self.assertEqual(self.bus.errors, [])
+
+
 if __name__ == "__main__":
     unittest.main()

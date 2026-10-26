@@ -108,5 +108,44 @@ class UiTests(unittest.TestCase):
         self.assertIn("硬件状态未知", errors.getvalue())
 
 
+    def test_write_zero_needs_confirmation_and_is_only_offered_off_or_holding(self):
+        self.panel.step_targets()
+        self.assertTrue(self.panel.btn_zero.isEnabled())           # off
+        with patch.object(self.panel, "confirm_zero", return_value=False) as ask:
+            self.panel.write_zero()
+        self.assertIn("yaw 30.0", ask.call_args[0][0])
+        self.assertEqual((self.driver.zeros, self.driver.saves), (0, 0))
+        self.panel.enable()
+        self.run_ticks(1)
+        self.assertFalse(self.panel.btn_zero.isEnabled())          # moving
+        self.run_ticks(500, until=lambda: self.neck.snapshot.phase == "hold")
+        self.assertTrue(self.panel.btn_zero.isEnabled())           # holding still
+
+    def test_write_zero_while_holding_updates_sliders_and_status(self):
+        self.panel.enable()
+        self.run_ticks(500, until=lambda: self.neck.snapshot.phase == "hold")
+        self.driver.measured = self.driver.command = Pose(2.0, -1.0)
+        self.neck._command = Pose(2.0, -1.0)
+        with patch.object(self.panel, "confirm_zero", return_value=True):
+            self.panel.write_zero()
+        self.assertEqual((self.driver.zeros, self.driver.saves, self.driver.disables), (1, 1, 0))
+        self.assertIn("零位已写入", self.panel.status.text())
+        self.assertEqual((self.panel.yaw.deg(), self.panel.pitch.deg()), (0, 0))
+        self.assertTrue(self.neck.enabled)
+
+    def test_refused_or_failed_zero_is_shown_and_a_fault_is_recorded(self):
+        self.panel.enable()
+        with patch.object(self.panel, "confirm_zero", return_value=True):
+            self.panel.write_zero()                                 # still moving: refused
+        self.assertIn("写零位未完成", self.panel.status.text())
+        self.assertTrue(self.neck.enabled)
+        self.run_ticks(500, until=lambda: self.neck.snapshot.phase == "hold")
+        self.driver.zero_error = True
+        with patch.object(self.panel, "confirm_zero", return_value=True):
+            self.panel.write_zero()
+        self.assertFalse(self.neck.enabled)
+        self.assertTrue(self.log.with_suffix(".fault.json").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

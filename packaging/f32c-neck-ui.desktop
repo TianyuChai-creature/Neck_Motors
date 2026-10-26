@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=F32C Neck UI
+Comment=Two-axis neck motor panel (preview, not tested on real hardware)
+Exec=f32c-neck-ui
+Icon=f32c-neck-ui
+Terminal=false
+Categories=Utility;

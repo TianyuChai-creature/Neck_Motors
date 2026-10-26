@@ -19,6 +19,21 @@ pip install wheel/f32c_neck_motors-0.4.0-py3-none-any.whl     # 纯 Python，不
 
 **0.4.0 仅做过离线测试，未通电实测**；台架验证（提速、直通模式、写零位）前请当作预览版。重新构建：`pip wheel . --no-deps -w wheel`（`tools/` 与测试不在包里）。
 
+## 免安装运行 UI（Linux x86_64）
+
+从 [Releases](https://github.com/TianyuChai-creature/Neck_Motors/releases) 下载其一（内含 Python 与 PySide6，无需另装）：
+
+```bash
+chmod +x f32c-neck-ui-linux-x86_64 && ./f32c-neck-ui-linux-x86_64 [/dev/ttyACM0]    # 单文件，首次启动要解压几秒
+chmod +x F32C-Neck-UI-x86_64.AppImage && ./F32C-Neck-UI-x86_64.AppImage             # 无 FUSE 时加 --appimage-extract-and-run
+```
+
+- 在 Ubuntu 22.04 级别（glibc 2.34）构建，更老的发行版可能跑不起来；需要桌面环境（X11/Wayland）和串口权限（`dialout` 组）。
+- 打不开串口会弹窗提示并以非零码退出；日志写到 `~/f32c_logs/`。
+- **只做过假总线冒烟测试，未在真机和真实显示器上验证。**
+- Windows 暂无 .exe：驱动层用 `termios`，Windows 没有串口支持，需先补 Windows 串口层。
+- 自行构建：`pip install pyinstaller PySide6`，装好 appimagetool 后运行 `packaging/build_linux.sh`，产物在 `build/`。
+
 ## 最小用法
 
 ```python

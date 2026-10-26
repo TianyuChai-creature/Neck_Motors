@@ -394,3 +394,4 @@ python3 tools/ui.py [/dev/ttyACM0]
 | 2026-10-26 | v4.2 | 新增 `docs/架构图.md`（Mermaid：分层依赖、tick 时序、使能、写零位、状态机、保护分级）与 `tools/replay.py` → `docs/回放.html`（真实 Driver/Neck 对假总线跑剧本的单文件回放页）；假总线新增可选一阶滞后 `lag`。写零位后清掉旧目标显示。无真机改动。 |
 | 2026-10-26 | v4.3 | `tools/ui.py` 滑条改为持续 `set_target`（跟随路径），去掉 `move_to` 逻辑；新增“暂停输入”按钮验证 `stale`；写零位前先 `hold()`。UI 因此可覆盖点对点与跟随两条路径做验收。离线测试通过，未通电。 |
 | 2026-10-26 | v4.4 | 构建并入库 `wheel/f32c_neck_motors-0.4.0-py3-none-any.whl`（纯 Python，约 24 KB，只含 `neck` 包；干净 venv 安装、导入通过）。旧 C++ wheel 已随重构删除，可从 tag `pre-refactor` 找回。仅离线测试，未通电。 |
+| 2026-10-26 | v4.5 | 新增 Linux 免安装发布物：`packaging/build_linux.sh`（PyInstaller 单文件 + AppImage），`tools/ui.py` 打不开串口时弹窗并退出码 1、冻结运行日志写 `~/f32c_logs/`（新增测试，共 146 项）。仅用假总线（pty）对冻结程序、AppImage 做过冒烟，未真机、未真实显示器；Windows .exe 因 `termios` 无法提供。 |

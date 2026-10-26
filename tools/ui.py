@@ -255,13 +255,25 @@ class Panel(QWidget):
         event.accept()
 
 
+def log_directory() -> Path:
+    """Source checkout: <repo>/logs. Frozen (exe/AppImage): ~/f32c_logs, since the bundle dir is temporary."""
+    if getattr(sys, "frozen", False):
+        return Path.home() / "f32c_logs"
+    return ROOT / "logs"
+
+
 def main() -> None:
-    app = QApplication(sys.argv)
+    app = QApplication.instance() or QApplication(sys.argv)
     port = sys.argv[1] if len(sys.argv) > 1 else None
-    log_dir = ROOT / "logs"
+    log_dir = log_directory()
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / f"f32c_ui_{time.strftime('%Y%m%d_%H%M%S')}.log"
-    neck = Neck(Driver.open(DriverConfig(port=port, log_path=str(log_path))))
+    try:
+        neck = Neck(Driver.open(DriverConfig(port=port, log_path=str(log_path))))
+    except DriverError as exc:
+        print(f"F32C open failed: {exc}", file=sys.stderr)
+        QMessageBox.critical(None, "F32C 无法打开串口", str(exc))
+        sys.exit(1)
     try:
         window = Panel(neck, log_path)
         window.resize(640, 260)

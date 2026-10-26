@@ -13,7 +13,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication
 
 from neck.control import Neck
-from neck.driver import Pose
+from neck.driver import DriverError, Pose
 from tests.fakes import FakeDriver
 from tools import ui
 
@@ -180,6 +180,18 @@ class UiTests(unittest.TestCase):
             self.panel.write_zero()
         self.assertFalse(self.neck.enabled)
         self.assertTrue(self.log.with_suffix(".fault.json").exists())
+
+    def test_open_failure_reports_and_exits_nonzero(self):
+        err = io.StringIO()
+        with patch.object(ui.Driver, "open", side_effect=DriverError("no port")), \
+                patch.object(ui.QMessageBox, "critical") as box, \
+                patch.object(ui.sys, "argv", ["ui"]), \
+                patch.object(ui, "log_directory", return_value=self.log.parent), \
+                redirect_stderr(err), self.assertRaises(SystemExit) as raised:
+            ui.main()
+        self.assertEqual(raised.exception.code, 1)
+        box.assert_called_once()
+        self.assertIn("no port", err.getvalue())
 
 
 if __name__ == "__main__":

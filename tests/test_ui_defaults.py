@@ -54,12 +54,12 @@ class UiTests(unittest.TestCase):
     def test_enable_and_zero_share_the_sdk_trajectory_and_feedback(self):
         self.assertEqual(self.panel.pitch.slider.maximum(), 450)
         self.assertFalse(hasattr(self.panel, "set_zero"))
-        self.assertEqual(self.panel.smooth_speed.value(), 30)
-        self.assertEqual(self.head.tracking.max_accel_deg_s2, 360)
+        self.assertEqual(self.panel.smooth_speed.value(), 90)
+        self.assertEqual(self.head.tracking.max_accel_deg_s2, 720)
         self.panel.enable()
         self.assertAlmostEqual(self.head.snapshot.command.pitch_deg, 45.2)
-        self.assertEqual(self.head.snapshot.target, State(0, 35))
-        self.assertEqual(self.panel.pitch.deg(), 35)
+        self.assertEqual(self.head.snapshot.target, State(0, 0))
+        self.assertEqual(self.panel.pitch.deg(), 0)
         self.assertFalse(self.motor.sent)
         for _ in range(500):
             self.now += .033
@@ -86,9 +86,13 @@ class UiTests(unittest.TestCase):
         self.now += .033
         self.panel.step_targets()
         self.assertTrue(self.head.enabled)
-        for _ in range(4):
+        phases = set()
+        for _ in range(30):  # level 1, then level 2, then a fault once feedback is lost for 0.5 s
             self.now += .033
             self.panel.step_targets()
+            phases.add(self.head.phase)
+            if not self.head.enabled: break
+        self.assertIn("degraded", phases)
         self.assertFalse(self.head.enabled)
         self.assertTrue(self.panel.log_path.with_suffix(".fault.json").exists())
         self.motor.close_error = True

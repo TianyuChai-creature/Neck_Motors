@@ -14,13 +14,13 @@ python3 -c 'from f32c import HeadTracker, TrackingConfig, TrackingError; print("
 
 0.2.0 将发布内容收敛为电机 SDK，保留 `HeadTracker`、`TrackingConfig`、`TrackingError` 和运行时 `set_pi()`，沿用原有电机配置结构和默认 PI。图像采集相关的 Python 接口和原生组件不再提供，输入数据由上层应用管理。调参工具与示例位于源码仓库 `examples/`，不随 whl 安装。
 
-0.3.0 新增同步 `HeadController`：统一使用 `HeadTracker` 生成参考，并负责反馈读取、参考超前限制、误差/无进展/保持振荡保护和故障清理。UI 和集成应用调用同一入口，无后台线程。原有 `Gimbal2Dof` 和纯软件 `HeadTracker` 保持可用；低层 API 不自动加入控制策略。0.3.1 将高层使能后的默认目标设为 yaw=0°、pitch=35°，通过 `DEFAULT_HOLD_POSITION` 导出。0.3.2进一步统一实测电机参数和集成入口默认值。固定目标不等于实际到位或机械锁止，应以回读验证。
+0.3.0 新增同步 `HeadController`：统一使用 `HeadTracker` 生成参考，并负责反馈读取、参考超前限制、误差/无进展/保持振荡保护和故障清理。UI 和集成应用调用同一入口，无后台线程。原有 `Gimbal2Dof` 和纯软件 `HeadTracker` 保持可用；低层 API 不自动加入控制策略。0.3.1 将高层使能后的默认目标设为 yaw=0°、pitch=35°，通过 `DEFAULT_HOLD_POSITION` 导出。**未发布改动**：`DEFAULT_HOLD_POSITION` 改为已存零位 yaw=0°、pitch=0°；`HeadController` 默认参考上限 90°/s、720°/s²；保护改为分级（见 §4.2）；`Config.travel_rpm` 默认 15、`accel` 默认 2。这些改动仅经无硬件测试，未实机验证。0.3.2进一步统一实测电机参数和集成入口默认值。固定目标不等于实际到位或机械锁止，应以回读验证。
 
 ## 2. 现场方向、目标与控制语义
 
 零位由用户手动写入，SDK 不自动标定。yaw 增大为第一人称向左；pitch 增大为低头。上游 Quest 角度的反号、比例、身份和授权由集成应用负责。
 
-`HeadController` 将**新期望 pitch 目标**截断到 +45°（配置的目标上限更小时采用较小值），没有 40°/43°反馈故障边界。初始实测即使超过 45°，也保留实测坐标，不因此失能、不改零位；`HeadController.enable()` 默认从实测生成到 yaw=0°、pitch=35°的轨迹，持续调用 `tick()` 推进，其初始中间参考可能仍大于 45°。整定工具的自动试验计划要求位置及阶跃均不超过 45°，避免把截断后的动作记成原计划通过；这不用于诊断反馈角度。
+`HeadController` 将**新期望 pitch 目标**截断到 +45°（配置的目标上限更小时采用较小值），没有 40°/43°反馈故障边界。初始实测即使超过 45°，也保留实测坐标，不因此失能、不改零位；`HeadController.enable()` 默认从实测生成到已存零位 yaw=0°、pitch=0°的轨迹，持续调用 `tick()` 推进，其初始中间参考可能仍大于 45°。整定工具的自动试验计划要求位置及阶跃均不超过 45°，避免把截断后的动作记成原计划通过；这不用于诊断反馈角度。
 
 低层 `Gimbal2Dof.set_deg()` 仍立即下发，不裁剪到 45°或生成轨迹。单圈角度按协议 0.1°分辨率量化并对 360°取模。低层 `read()` 保留原始反馈；`HeadController` 将其转换到有符号坐标。两轴在同一串口串行读写，不是同步采样。同一控制实例由一个线程串行访问。
 
@@ -62,8 +62,8 @@ with Gimbal2Dof(Config(device="/dev/ttyACM0")) as motor:
 | `device` | `None` | 串口路径；空值扫描 `/dev/serial/by-id/*`、`ttyACM*`、`ttyUSB*`，要求两轴回应 |
 | `baud` | `115200` | 支持 9600、57600、115200，8N1 |
 | `id_yaw`, `id_pitch` | `1`, `2` | 地址 1～255，必须不同 |
-| `travel_rpm` | `5` | 目标速度参数，0～1000 RPM；不等同于主机轨迹速度 |
-| `accel` | `1` | 加速度参数，0～65535，协议单位转/s² |
+| `travel_rpm` | `15` | 目标速度参数，0～1000 RPM；不等同于主机轨迹速度 |
+| `accel` | `2` | 加速度参数，0～65535，协议单位转/s² |
 | `yaw_speed_kp`, `yaw_speed_ki` | `40`, `4` | yaw 速度环 PI，整数 0～256 |
 | `yaw_pos_kp`, `yaw_pos_ki` | `42`, `0` | yaw 位置环 PI，整数 0～256 |
 | `pitch_speed_kp`, `pitch_speed_ki` | `10`, `4` | pitch 速度环 PI，整数 0～256 |
@@ -86,8 +86,8 @@ from f32c import Config, Gimbal2Dof
 
 motor_config = Config(
     device="/dev/ttyACM0",
-    travel_rpm=5,
-    accel=1,
+    travel_rpm=15,
+    accel=2,
     yaw_speed_kp=40, yaw_speed_ki=4, yaw_pos_kp=42, yaw_pos_ki=0,
     pitch_speed_kp=10, pitch_speed_ki=4, pitch_pos_kp=40, pitch_pos_ki=0,
 )
@@ -235,25 +235,34 @@ from f32c import Config, HeadController
 
 with HeadController(Config(device="/dev/ttyACM0")) as head:
     # 仅在应用已取得操作员使能许可后调用。
-    head.enable()                 # 默认从实测位置前往 yaw=0°、pitch=35°；不写零点。
+    head.enable()                 # 默认从实测位置前往已存零位 yaw=0°、pitch=0°；不写零点。
     while head.phase == "moving":
         snapshot = head.tick()   # 以实测到位并稳定 0.5 s 判断完成。
         time.sleep(1 / 30)
 ```
 
-默认目标由 `f32c.DEFAULT_HOLD_POSITION` 给出。`enable()` 只在从失能进入使能时建立此目标，重复调用不会覆盖已有目标。显式 `move_to(0, 0)` 仍可回已有零位；到位后应持续 `tick()` 保持反馈监测。自定义目标范围仍会裁剪默认目标。低层 `Gimbal2Dof.enable()` 继续原位保持。
+默认目标由 `f32c.DEFAULT_HOLD_POSITION` 给出。`enable()` 只在从失能进入使能时建立此目标，重复调用不会覆盖已有目标。到位后应持续 `tick()` 保持反馈监测。自定义目标范围仍会裁剪默认目标。低层 `Gimbal2Dof.enable()` 继续原位保持。
 
-仓库提供固定目标保持窗口：安装此 whl 和 `requirements-ui.txt` 后，运行 `python3 examples/hold_position.py /dev/ttyACM0`。它只调用低层 `enable_at(0, 35)`，不走回零流程，关闭窗口或点击“解锁并退出”会发送两轴失能请求。窗口直接采用0.3.2的 `Config()` 默认配置，不再维护另一份PI常量。窗口串行读取两轴角度和电压，电压超出8～15 V或通信异常时停止保持并请求失能。它会向固定目标运动，不置零、不保存参数，也不保证外力下完全无偏移。
+仓库提供固定目标保持窗口：安装此 whl 和 `requirements-ui.txt` 后，运行 `python3 examples/hold_position.py /dev/ttyACM0`。它只调用低层 `enable_at(0, 0)`，不走回零流程，关闭窗口或点击“解锁并退出”会发送两轴失能请求。窗口直接采用0.3.2的 `Config()` 默认配置，不再维护另一份PI常量。窗口串行读取两轴角度和电压，电压超出8～15 V或通信异常时停止保持并请求失能。它会向固定目标运动，不置零、不保存参数，也不保证外力下完全无偏移。
 
-`HeadController()` 不传自定义 tracking 时，默认 yaw 目标范围−60°～60°、pitch −180°～45°、软件速度上限30°/s、加速度360°/s²。独立的 `TrackingConfig`/`HeadTracker` 保留通用算法默认值；显式传入自定义 `TrackingConfig` 会覆盖上述控制器基线，不应继续沿用主仓旧的高速配置。
+`HeadController()` 不传自定义 tracking 时，默认 yaw 目标范围−60°～60°、pitch −180°～45°、软件速度上限90°/s、加速度720°/s²（`response_hz=15`、`min_cutoff_hz=6`）；电机侧 `travel_rpm=15`（约90°/s）、`accel=2`（720°/s²）与之对应。独立的 `TrackingConfig`/`HeadTracker` 保留通用算法默认值；显式传入自定义 `TrackingConfig` 会覆盖上述控制器基线，不应继续沿用主仓旧的高速配置。
 
 Quest 集成见同目录[Quest集成说明](Quest集成说明.md)，重点是单线程设备所有权、只提交新样本、持续 tick、输入失效和坐标映射。
 
 跟随模式仅在收到**新输入**时调用 `head.set_target(yaw, pitch, received_at=接收时单调时钟)`；持续调用 `head.tick(may_send=权限回调)`，回调必须无副作用、快速返回。SDK 在反馈之后及每轴发送前复核许可，撤销时停止新目标输出，不发送额外制动轨迹。`head.hold()` 同样停止新参考，仍读取反馈和检查误差。失联恢复应由宿主确认身份/授权，再提交新样本，轨迹从新反馈建立。
 
-`set_target` 不得重复使用旧包来刷新时间；未来或倒退时间戳拒绝，过期输入进入 HOLD。`move_to` 是独立点到点动作，不受网络输入过期影响。`set_motion_limits(speed, accel)` 更新软件轨迹约束。`snapshot` 包含 phase、enabled、measured、command、target、feedback_age_s、reason 和 following_limited。command 仅表示成功写出的参考，measured 才表示事实。
+`set_target` 不得重复使用旧包来刷新时间；未来或倒退时间戳拒绝，过期输入进入 HOLD。`move_to` 是独立点到点动作，不受网络输入过期影响。`set_motion_limits(speed, accel)` 更新软件轨迹约束。`snapshot` 包含 phase、enabled、measured、command、target、feedback_age_s、reason 和 following_limited 和 level（0 正常、1 扰动、2 降级、3 故障）。command 仅表示成功写出的参考，measured 才表示事实。
 
-`ProtectionConfig` 默认：每 tick 反馈等待预算 40 ms、最大反馈年龄 100 ms；参考超前 9°等待，误差恢复到 3°以内清除等待标记；已删除仅按跟随误差大小触发失能的判断，`max_error_deg` 为兼容旧调用保留、不再控制失能；持续 1.5 s 误差超过 6°且实测变化 ≤0.3°报无进展；固定保持窗口摆幅 >1°报振荡。点到点动作默认 15 s 截止、实测及参考都接近目标并连续稳定 0.5 s 才结束。一次短暂读失败暂停推进，反馈过期则故障；活跃目标期间控制间隔超过 `max_gap_s` 同样故障。
+`HeadController` 采用**分级保护**，`snapshot.level` 给出当前级别，`reason` 给出原因：
+
+| 级别 | 含义 | 触发（默认值） | 处理 |
+| --- | --- | --- | --- |
+| 0 正常 | — | — | 按轨迹推进 |
+| 1 扰动 | 短暂、可自愈 | 单次反馈读失败且反馈龄 <0.1 s；`tick()` 间隔 >`max_gap_s` 但 <1 s；保持时摆幅 >1° | **不失能、不改相位**：本周期暂停推进，保持上一条指令，轨迹从当前指令重新同步，随后继续。计入事件计数 |
+| 2 降级 | 持续异常，但仍可能自行恢复 | 反馈龄 ≥0.1 s（<0.5 s）；持续 1.5 s 误差 >6° 且实测变化 ≤0.3°（无进展） | **保持使能**，进入 `degraded` 相位，停止推进；无进展时把指令**一次性拉回实测位姿**，让电机不再顶着阻力；误差 <3° 并稳定 0.3 s 后自动回到原相位（`reason=recovered`），期间到来的新目标会被记住 |
+| 3 严重 | 无法继续安全运行 | 反馈丢失 ≥0.5 s；`tick()` 间隔 ≥1 s；降级持续 ≥5 s；30 s 内 1/2 级事件累计 ≥6 次（`repeated_disturbance`）；目标写失败；反馈非法；点到点超时；轨迹异常 | 停止下发并请求两轴失能，抛 `HeadControlError`，需显式 `reset_fault()` |
+
+`ProtectionConfig` 其它默认：每 tick 反馈等待预算 80 ms、参考超前 18°等待（误差回到 3°以内清除等待标记）；已删除仅按跟随误差大小触发失能的判断，`max_error_deg` 为兼容旧调用保留、不再控制失能。点到点动作默认 15 s 截止（降级期间不消耗），实测及参考都接近目标并连续稳定 0.5 s 才结束。新增字段：`feedback_lost_s`、`control_gap_fault_s`、`degraded_timeout_s`、`recover_time_s`、`escalation_window_s`、`escalation_events`。分级只调整**何时**失能，不改变“写成功不等于电机确认”的约定。
 
 `HeadControlError` 包含 reason、snapshot 和 cleanup_error；故障停止推进并尝试失能，不自动重新使能。成功清理后需显式 `reset_fault()` 才能再次 enable；关闭失败按硬件状态未知处理。宿主仍应在同一所有权锁内关闭对象并保存错误，不以 enabled=False 推断物理失能。
 
@@ -359,7 +368,7 @@ python3 examples/autotune.py --device /dev/ttyACM0 --center 0 0 --enable
 
 人工受扰记录可用 `examples/tune.py` 的 `hold/push/release/report` 命令，详见仓库 readme。自动试验使用目标阶跃，不等同于真实外力冲击；无力传感器时不能给出 Nm/rad 的绝对刚度。线缆阻力可作为现有负载参与整定，实体极限不能用更高 PI 强推。
 
-UI 的“使能并到保持位”使用 `HeadController.enable()` 的默认 yaw=0°、pitch=35°目标，滑条/到 0°调用 `move_to()`，共用同一轨迹和保护。计划周期约 33 ms，实际包含串口和界面耗时；yaw 滑条 ±60°，pitch −180°～45°。UI 仅展示状态并记录 `.fault.json` / `.close.json`，没有第二份滤波、误差保护或电机 ctypes 绑定。相机仍是独立可选组件。
+UI 的“使能并到保持位”使用 `HeadController.enable()` 的默认已存零位 yaw=0°、pitch=0°目标，滑条/到 0°调用 `move_to()`，共用同一轨迹和保护。计划周期约 33 ms，实际包含串口和界面耗时；yaw 滑条 ±60°，pitch −180°～45°。UI 仅展示状态并记录 `.fault.json` / `.close.json`，没有第二份滤波、误差保护或电机 ctypes 绑定。相机仍是独立可选组件。
 
 ```bash
 F32C_PYTHON=/usr/bin/python3 ./package_sdk.sh

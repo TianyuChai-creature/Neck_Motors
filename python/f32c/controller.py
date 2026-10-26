@@ -3,6 +3,12 @@
 One caller thread owns this object and calls tick regularly. No background
 threads, automatic enable, zero calibration, or application authorization live
 here. HeadTracker is the sole filter, trajectory and output hysteresis engine.
+
+Graded protection (ControlSnapshot.level): 0 normal; 1 disturbance (transient:
+pause this tick, keep the last command, resynchronise, nothing is disabled);
+2 degraded (phase "degraded": stay enabled, stop advancing, relax the command to
+the measured pose once, resume automatically after a stable recovery); 3 fault
+(stop and request disable on both axes, latched until reset_fault()).
 """
 
 from __future__ import annotations
@@ -19,9 +25,11 @@ from .tracking import HeadTracker, TrackingConfig, TrackingError, _finite, _wrap
 
 @dataclass(frozen=True)
 class ProtectionConfig:
-    feedback_timeout_s: float = 0.04
-    feedback_max_age_s: float = 0.1
-    reference_lead_deg: float = 9.0
+    feedback_timeout_s: float = 0.08
+    feedback_max_age_s: float = 0.1   # level 2 (degraded) when feedback is older
+    feedback_lost_s: float = 0.5      # level 3 (fault) when feedback is older
+    control_gap_fault_s: float = 1.0  # level 3 for a tick gap this long; shorter gaps are level 1
+    reference_lead_deg: float = 18.0
     max_error_deg: float = 12.0  # Compatibility only; error magnitude no longer disables.
     stationary_error_deg: float = 3.0
     stall_after_s: float = 1.5
@@ -30,6 +38,10 @@ class ProtectionConfig:
     settle_tolerance_deg: float = 1.0
     settle_time_s: float = 0.5
     move_timeout_s: float = 15.0
+    degraded_timeout_s: float = 5.0   # level 3 when level 2 lasts this long
+    recover_time_s: float = 0.3       # error must stay small this long to leave level 2
+    escalation_window_s: float = 30.0
+    escalation_events: int = 6        # level 1/2 events inside the window that escalate to level 3
 
     def __post_init__(self):
         for name in self.__dataclass_fields__:
@@ -37,6 +49,8 @@ class ProtectionConfig:
                 raise ValueError(f"{name} must be positive")
         if not self.feedback_timeout_s <= self.feedback_max_age_s <= 1:
             raise ValueError("feedback timeouts must satisfy 0 < timeout <= max_age <= 1")
+        if not self.feedback_max_age_s < self.feedback_lost_s:
+            raise ValueError("expected feedback_max_age < feedback_lost")
         if not self.stationary_error_deg < self.reference_lead_deg:
             raise ValueError("expected stationary_error < reference_lead")
 
@@ -51,6 +65,7 @@ class ControlSnapshot:
     feedback_age_s: float | None
     reason: str = ""
     following_limited: tuple[str, ...] = ()
+    level: int = 0  # 0 normal, 1 disturbance, 2 degraded, 3 fault
 
 
 class HeadControlError(F32CError):
@@ -90,7 +105,8 @@ class HeadController:
                  motor: Gimbal2Dof | None = None):
         self.tracking = tracking or TrackingConfig(
             yaw_limits=(-60, 60), pitch_limits=(-180, 45),
-            max_speed_deg_s=30, max_accel_deg_s2=360)
+            max_speed_deg_s=90, max_accel_deg_s2=720,
+            response_hz=15, min_cutoff_hz=6)
         if self.tracking.pitch_limits[0] > 45:
             raise ValueError("pitch target range must include an angle at or below 45 degrees")
         self.protection = protection or ProtectionConfig()
@@ -112,12 +128,24 @@ class HeadController:
         self._hold_samples = deque()
         self._hold_target = None
         self._hold_since = 0.0
+        self._level = 0
+        self._events = deque()
+        self._clear_degraded()
+
+    def _clear_degraded(self):
+        self._degraded_since = self._recover_since = None
+        self._degraded_reason = ""
+        self._resume_phase = "hold"
+        self._resume_move_s = None
+        self._relieved = False
 
     @property
     def snapshot(self) -> ControlSnapshot:
         age = None if self._feedback_at is None else max(0., time.monotonic() - self._feedback_at)
+        level = 3 if self.phase == "fault" else 2 if self.phase == "degraded" else self._level
         return ControlSnapshot(self.phase, self.enabled, self._measured, self._command,
-                               self._requested, age, self._reason, tuple(sorted(self._limited)))
+                               self._requested, age, self._reason, tuple(sorted(self._limited)),
+                               level)
 
     def open(self) -> HeadController:
         if not self._opened:
@@ -143,7 +171,7 @@ class HeadController:
         self.motor.stop_log()
 
     def enable(self) -> ControlSnapshot:
-        """Enable at the measured pose, then approach (yaw=0, pitch=35) via tick()."""
+        """Enable at the measured pose, then return to the stored zero (DEFAULT_HOLD_POSITION) via tick()."""
         if self.phase == "fault":
             raise F32CError("reset the controller fault explicitly before enabling")
         if self.enabled:
@@ -168,6 +196,9 @@ class HeadController:
         self._hold_samples.clear()
         self._hold_target = None
         self._limited.clear()
+        self._level = 0
+        self._events.clear()
+        self._clear_degraded()
         for samples in self._motion.values():
             samples.clear()
         self.move_to(DEFAULT_HOLD_POSITION.yaw_deg, DEFAULT_HOLD_POSITION.pitch_deg)
@@ -203,6 +234,9 @@ class HeadController:
             self._last_tick = now
         self._goal = self._requested = target
         self._input_at = stamp
+        if self.phase == "degraded":  # remembered; applied when level 2 ends
+            self._resume_phase, self._resume_move_s = "following", None
+            return
         self.phase, self._reason = "following", ""
         self._move_deadline = self._settle_since = None
 
@@ -215,6 +249,9 @@ class HeadController:
         if self._goal is None:
             self._last_tick = time.monotonic()
         self._goal = self._requested = self._target(yaw_deg, pitch_deg)
+        if self.phase == "degraded":  # remembered; applied when level 2 ends
+            self._resume_phase, self._resume_move_s = "moving", duration
+            return
         self.phase, self._reason = "moving", ""
         self._move_deadline = time.monotonic() + duration
         self._settle_since = None
@@ -229,6 +266,7 @@ class HeadController:
         self._require_enabled()
         self._goal = None
         self._tracker = None
+        self._clear_degraded()
         self._input_at = self._move_deadline = self._settle_since = None
         self.phase = "source_hold" if reason in ("permission_lost", "input_stale", "source_changed") else "hold"
         self._reason = reason
@@ -246,6 +284,7 @@ class HeadController:
         self._tracker = HeadTracker(initial, config, timestamp=now)
 
     def _guard(self, now: float):
+        """Return None, ("disturb", reason) for level 1 or ("degrade", reason) for level 2."""
         errors = _error(self._measured, self._command)
         for axis in tuple(self._limited):
             if abs(getattr(errors, axis + "_deg")) < self.protection.stationary_error_deg:
@@ -264,17 +303,17 @@ class HeadController:
                     values = [_wrap(v - origin) for v in values]
                 if (all(abs(getattr(row[2], axis + "_deg")) > 6 for row in self._progress) and
                         max(values) - min(values) <= self.protection.stall_motion_deg + 1e-9):
-                    self._fault(f"no_progress {axis}: measured={getattr(self._measured, axis + '_deg'):.3f}, "
-                                f"command={getattr(self._command, axis + '_deg'):.3f}")
+                    return ("degrade", f"no_progress {axis}: measured={getattr(self._measured, axis + '_deg'):.3f}, "
+                                       f"command={getattr(self._command, axis + '_deg'):.3f}")
         if self._command != self._hold_target:
             self._hold_target, self._hold_since = self._command, now
             self._hold_samples.clear()
         near_goal = self._goal is None or max(map(abs, vars(_error(self._command, self._goal)).values())) <= .1
         if not near_goal or any(self._motion.values()):
             self._hold_samples.clear()
-            return
+            return None
         if not self._hold_samples and max(abs(errors.yaw_deg), abs(errors.pitch_deg)) > .5 and now - self._hold_since < 1:
-            return
+            return None
         self._hold_samples.append((now, errors))
         while self._hold_samples and self._hold_samples[0][0] < now - 1:
             self._hold_samples.popleft()
@@ -282,29 +321,134 @@ class HeadController:
             for axis in self._motion:
                 values = [getattr(row[1], axis + "_deg") for row in self._hold_samples]
                 if max(values) - min(values) > self.protection.hold_swing_deg + 1e-9:
-                    self._fault(f"hold_oscillation {axis}")
+                    self._hold_samples.clear()
+                    return ("disturb", f"hold_oscillation {axis}")
+        return None
+
+    def _note_event(self, now: float, reason: str):
+        """Count a level 1/2 event; too many in the window escalate to level 3."""
+        self._events.append(now)
+        while self._events and self._events[0] < now - self.protection.escalation_window_s:
+            self._events.popleft()
+        if len(self._events) >= self.protection.escalation_events:
+            self._fault(f"repeated_disturbance: {len(self._events)} events in "
+                        f"{self.protection.escalation_window_s:g}s, last={reason}")
+
+    def _disturb(self, now: float, reason: str, *, count: bool = True):
+        """Level 1: no disable, no phase change; the caller pauses output this tick."""
+        self._level = 1
+        self._reason = reason
+        if count:
+            self._note_event(now, reason)
+
+    def _degrade(self, now: float, reason: str):
+        """Level 2: stay enabled, stop advancing, wait for a stable recovery."""
+        if self.phase == "degraded":
+            self._degraded_reason = reason
+            self._reason = "degraded: " + reason
+            return
+        self._note_event(now, reason)
+        self._resume_phase = self.phase if self.phase in ("moving", "following") and self._goal is not None else "hold"
+        self._resume_move_s = None
+        if self.phase == "moving" and self._move_deadline is not None:
+            self._resume_move_s = max(0., self._move_deadline - now)
+        self._degraded_since, self._recover_since, self._relieved = now, None, False
+        self._degraded_reason = reason
+        self._tracker = None
+        self._move_deadline = self._settle_since = None
+        self._progress.clear()
+        self._hold_samples.clear()
+        self.phase, self._reason = "degraded", "degraded: " + reason
+
+    def _tick_degraded(self, now: float, may_send: Callable[[], bool] | None) -> ControlSnapshot:
+        if now - self._degraded_since >= self.protection.degraded_timeout_s:
+            self._fault(f"degraded_timeout: {self._degraded_reason}")
+        if may_send is not None and not may_send():
+            return self.hold("permission_lost")
+        if not self._relieved:
+            # Once per episode: pull the reference back to the measured pose so the
+            # motors stop pushing against a stall or an external disturbance.
+            for axis, setter in (("yaw", self.motor.set_yaw_deg), ("pitch", self.motor.set_pitch_deg)):
+                value = getattr(self._measured, axis + "_deg")
+                if round(value * 10) != round(getattr(self._command, axis + "_deg") * 10):
+                    try:
+                        setter(value)
+                    except F32CError as exc:
+                        self._fault(f"target_write_failed {axis}: {exc}")
+                    self._sent_at[axis] = time.monotonic()
+                    self._command = replace(self._command, **{axis + "_deg": value})
+            self._relieved = True
+        errors = _error(self._measured, self._command)
+        if max(abs(errors.yaw_deg), abs(errors.pitch_deg)) < self.protection.stationary_error_deg:
+            self._recover_since = now if self._recover_since is None else self._recover_since
+            if now - self._recover_since >= self.protection.recover_time_s:
+                return self._recover(now)
+        else:
+            self._recover_since = None
+        return self.snapshot
+
+    def _recover(self, now: float) -> ControlSnapshot:
+        phase = self._resume_phase if self._goal is not None else "hold"
+        remaining = self._resume_move_s
+        self._clear_degraded()
+        self.phase, self._reason = phase, "recovered"
+        if phase == "moving":
+            self._move_deadline = now + (remaining if remaining else self.protection.move_timeout_s)
+        self._tracker = None
+        self._settle_since = None
+        self._limited.clear()
+        self._progress.clear()
+        self._hold_samples.clear()
+        for samples in self._motion.values():
+            samples.clear()
+        self._last_tick = now
+        return self.snapshot
 
     def tick(self, *, may_send: Callable[[], bool] | None = None) -> ControlSnapshot:
         """Read feedback every tick, then send changed axes under current permission."""
         self._require_enabled()
         started = time.monotonic()
+        self._level = 0
         if self._goal is not None and started - self._last_tick > self.tracking.max_gap_s + 1e-9:
-            self._fault("control_gap: reset from fresh feedback before resuming")
+            gap = started - self._last_tick
+            if gap >= self.protection.control_gap_fault_s:
+                self._fault(f"control_gap: {gap:.2f}s without a control tick")
+            # Level 1: the motor kept its last command; resume the trajectory from it.
+            self._tracker = None
+            self._disturb(started, f"control_gap: {gap:.2f}s")
         self._last_tick = started
         try:
             self._read()
         except ValueError as exc:
             self._fault(f"invalid_feedback: {exc}")
         except F32CError as exc:
-            if self._feedback_at is None or time.monotonic() - self._feedback_at >= self.protection.feedback_max_age_s:
+            age = float("inf") if self._feedback_at is None else time.monotonic() - self._feedback_at
+            if age >= self.protection.feedback_lost_s:
                 self._fault(f"feedback_stale: {exc}")
             self._tracker = None
-            self._reason = f"feedback_wait: {exc}"
+            if age >= self.protection.feedback_max_age_s:
+                if self.phase != "degraded":
+                    self._degrade(time.monotonic(), f"feedback_degraded: {exc}")
+            else:
+                self._disturb(started, f"feedback_wait: {exc}", count=False)
             return self.snapshot
         now = time.monotonic()
-        if now - self._feedback_at >= self.protection.feedback_max_age_s:
-            self._fault("feedback_stale: acquisition exceeded feedback age budget")
-        self._guard(now)
+        age = now - self._feedback_at
+        if age >= self.protection.feedback_lost_s:
+            self._fault("feedback_stale: acquisition exceeded feedback lost budget")
+        if age >= self.protection.feedback_max_age_s:
+            self._tracker = None
+            self._disturb(now, "feedback_slow: acquisition exceeded feedback age budget", count=False)
+            return self.snapshot
+        finding = self._guard(now)
+        if self.phase == "degraded":
+            return self._tick_degraded(now, may_send)
+        if finding is not None:
+            kind, reason = finding
+            if kind == "degrade":
+                self._degrade(now, reason)
+                return self.snapshot
+            self._disturb(now, reason)
         if self._goal is None:
             return self.snapshot
         if may_send is not None and not may_send():
@@ -324,7 +468,7 @@ class HeadController:
             if now >= self._move_deadline:
                 self._fault(f"move_timeout: target={self._goal}, measured={self._measured}")
         if self._tracker is None:
-            self._new_tracker(self._measured, now)
+            self._new_tracker(self._command if self._command is not None else self._measured, now)
         try:
             self._tracker.set_target(self._goal.yaw_deg, self._goal.pitch_deg, timestamp=now)
             candidate = self._tracker.step(timestamp=now)
@@ -357,13 +501,17 @@ class HeadController:
             self._command = replace(self._command, **{axis + "_deg": value})
         if limited:
             self._new_tracker(self._command, time.monotonic())
-        self._reason = "waiting_for_feedback" if limited else ""
+        if limited:
+            self._reason = "waiting_for_feedback"
+        elif self._level != 1:
+            self._reason = ""
         return self.snapshot
 
     def _fault(self, reason: str):
         self.phase, self._reason = "fault", reason
         self._goal = None
         self._tracker = None
+        self._clear_degraded()
         if self._engaged:
             try:
                 self.motor.disable()
@@ -385,6 +533,7 @@ class HeadController:
             self._cleanup_error = ""
         self.enabled = False
         self._goal = self._tracker = None
+        self._clear_degraded()
         self.phase, self._reason = "off", ""
 
     def reset_fault(self):

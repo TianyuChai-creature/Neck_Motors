@@ -82,7 +82,7 @@ class ControllerTests(unittest.TestCase):
     def test_enable_moves_to_hold_position_using_feedback_and_repeated_enable_keeps_target(self):
         head = self.controller(State(7, 45.2))
         self.assertEqual(head.snapshot.phase, "moving")
-        self.assertEqual(head.snapshot.target, State(0, 35))
+        self.assertEqual(head.snapshot.target, State(0, 0))
         self.assertAlmostEqual(head.snapshot.command.yaw_deg, 7)
         self.assertAlmostEqual(head.snapshot.command.pitch_deg, 45.2)
         self.assertFalse(self.motor.sent)
@@ -91,7 +91,8 @@ class ControllerTests(unittest.TestCase):
             if status.reason == "target_reached": break
         self.assertEqual(status.reason, "target_reached")
         self.assertEqual(status.phase, "hold")
-        self.assertLessEqual(abs(status.measured.pitch_deg - 35), 1)
+        self.assertLessEqual(abs(status.measured.pitch_deg), 1)
+        self.assertLessEqual(abs(status.measured.yaw_deg), 1)
         self.assertGreater(self.motor.reads, 20)
         self.assertEqual(self.motor.disables, 0)
         head.move_to(5, 10)
@@ -169,20 +170,69 @@ class ControllerTests(unittest.TestCase):
         self.tick()
         self.assertTrue(head.enabled)
         self.motor.read_error = True
+        levels = []
         with self.assertRaisesRegex(HeadControlError, "feedback_stale"):
-            for _ in range(10): self.tick()
+            for _ in range(60):
+                levels.append(self.tick().level)
+        # 1 = short wait, 2 = degraded (still enabled), then 3 = fault after feedback_lost_s.
+        self.assertEqual(sorted(set(levels)), [1, 2])
+        self.assertLess(levels.index(2), 10)
         self.assertEqual(self.motor.disables, 1)
+
+    def test_feedback_outage_shorter_than_lost_budget_recovers_without_disable(self):
+        head = self.controller()
+        head.set_target(10, 0)
+        self.tick()
+        self.motor.read_error = True
+        for _ in range(10): self.tick()
+        self.assertEqual(head.phase, "degraded")
+        self.assertEqual(head.snapshot.level, 2)
+        self.motor.read_error = False
+        for _ in range(40):
+            head.set_target(10, 0)
+            self.tick()
+        self.assertEqual(self.motor.disables, 0)
+        self.assertEqual(head.phase, "following")
+        self.assertEqual(head.snapshot.level, 0)
 
     def test_move_stall_is_detected_before_reference_reaches_zero(self):
         head = self.controller(State(0, 39), tracking=TrackingConfig(
             pitch_limits=(-180, 45), max_speed_deg_s=90, max_accel_deg_s2=180))
         self.motor.follow = False
         head.move_to(0, 0)
-        with self.assertRaisesRegex(HeadControlError, "no_progress pitch") as caught:
-            for _ in range(250): self.tick()
-        self.assertGreater(caught.exception.snapshot.command.pitch_deg, 25)
-        self.assertEqual(caught.exception.snapshot.measured.pitch_deg, 39)
+        for _ in range(250):
+            status = self.tick()
+            if status.phase == "degraded": break
+        self.assertEqual(status.phase, "degraded")
+        self.assertIn("no_progress pitch", status.reason)
+        self.assertEqual(status.level, 2)
+        self.assertGreater(status.command.pitch_deg, 10)  # detected well before the reference reaches 0
+        self.assertEqual(status.measured.pitch_deg, 39)
+        self.assertEqual(self.motor.disables, 0)
+        # A permanent stall keeps cycling degraded/recovered and is bounded by escalation.
+        with self.assertRaisesRegex(HeadControlError, "repeated_disturbance|degraded_timeout"):
+            for _ in range(2000): self.tick()
         self.assertEqual(self.motor.disables, 1)
+
+    def test_stall_that_clears_relaxes_the_command_and_resumes_the_move(self):
+        head = self.controller(State(0, 39), tracking=TrackingConfig(
+            pitch_limits=(-180, 45), max_speed_deg_s=90, max_accel_deg_s2=180))
+        self.motor.follow = False
+        head.move_to(0, 0)
+        for _ in range(250):
+            status = self.tick()
+            if status.phase == "degraded": break
+        self.assertEqual(status.phase, "degraded")
+        self.tick()
+        self.assertIn(("pitch", 39.0), self.motor.sent)  # command pulled back to measured
+        self.motor.follow = True  # the disturbance is gone
+        for _ in range(60): self.tick()
+        self.assertNotEqual(head.phase, "degraded")
+        for _ in range(600):
+            status = self.tick()
+            if status.reason == "target_reached": break
+        self.assertEqual(status.reason, "target_reached")
+        self.assertEqual(self.motor.disables, 0)
 
     def test_large_following_error_does_not_disable_but_no_progress_still_does(self):
         head = self.controller()
@@ -194,9 +244,19 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(head.enabled)
         self.assertEqual(self.motor.disables, 0)
         self.assertFalse(self.motor.sent)
-        with self.assertRaisesRegex(HeadControlError, "no_progress"):
-            for _ in range(50): self.tick()
-        self.assertEqual(self.motor.disables, 1)
+        for _ in range(60):
+            status = self.tick()
+            if status.phase == "degraded": break
+        self.assertEqual(status.phase, "degraded")
+        self.assertIn("no_progress", status.reason)
+        self.assertTrue(head.enabled)
+        self.assertEqual(self.motor.disables, 0)
+        for _ in range(40): self.tick()
+        self.assertEqual(head.phase, "hold")  # relaxed to the measured pose, then recovered
+        self.assertEqual(status.level, 2)
+        self.assertEqual(head.snapshot.level, 0)
+        self.assertEqual(self.motor.target, State(20, 20))
+        self.assertEqual(self.motor.disables, 0)
 
     def test_large_error_still_pauses_reference_until_feedback_catches_up(self):
         head = self.controller()
@@ -217,13 +277,42 @@ class ControllerTests(unittest.TestCase):
         self.motor.position = State(-.7, 0)
         self.tick()
         self.motor.position = State(.7, 0)
-        with self.assertRaisesRegex(HeadControlError, "hold_oscillation yaw"): self.tick()
+        status = self.tick()  # level 1: no disable, nothing is sent
+        self.assertEqual(status.level, 1)
+        self.assertIn("hold_oscillation yaw", status.reason)
+        self.assertTrue(head.enabled)
+        self.assertEqual(self.motor.disables, 0)
+        self.assertFalse(self.motor.sent)
 
-    def test_tick_gap_fault_and_failed_cleanup_are_observable(self):
+    def test_short_tick_gap_is_a_level_one_disturbance_and_motion_resumes(self):
+        head = self.controller()
+        head.set_target(10, 0)
+        self.tick()
+        status = self.tick(.11)
+        self.assertEqual(status.level, 1)
+        self.assertIn("control_gap", status.reason)
+        self.assertTrue(head.enabled)
+        self.assertEqual(self.motor.disables, 0)
+        for _ in range(10):
+            head.set_target(10, 0)
+            self.tick()
+        self.assertGreater(head.snapshot.command.yaw_deg, 0)
+        self.assertEqual(head.snapshot.level, 0)
+
+    def test_repeated_disturbances_escalate_to_a_fault(self):
+        head = self.controller()
+        head.set_target(10, 0)
+        with self.assertRaisesRegex(HeadControlError, "repeated_disturbance"):
+            for _ in range(10):
+                head.set_target(10, 0)
+                self.tick(.11)
+        self.assertEqual(self.motor.disables, 1)
+
+    def test_long_tick_gap_fault_and_failed_cleanup_are_observable(self):
         head = self.controller()
         head.set_target(10, 0)
         self.motor.disable_error = True
-        with self.assertRaisesRegex(HeadControlError, "control_gap") as caught: self.tick(.11)
+        with self.assertRaisesRegex(HeadControlError, "control_gap") as caught: self.tick(1.2)
         self.assertIn("disable unknown", caught.exception.cleanup_error)
         with self.assertRaises(F32CError): head.reset_fault()
         self.motor.disable_error = False
@@ -252,8 +341,8 @@ class ControllerTests(unittest.TestCase):
         head = self.controller(State(0, 35))
         self.assertEqual(head.tracking.yaw_limits, (-60, 60))
         self.assertEqual(head.tracking.pitch_limits, (-180, 45))
-        self.assertEqual(head.tracking.max_speed_deg_s, 30)
-        self.assertEqual(head.tracking.max_accel_deg_s2, 360)
+        self.assertEqual(head.tracking.max_speed_deg_s, 90)
+        self.assertEqual(head.tracking.max_accel_deg_s2, 720)
         for _ in range(120):
             head.set_target(10, 35, received_at=self.now)
             head.set_target(-10, 20, received_at=self.now)
@@ -278,7 +367,8 @@ class ControllerTests(unittest.TestCase):
         for config in (Config(accel=.5), Config(id_yaw=True), Config(pitch_pos_kp=.5)):
             with self.assertRaisesRegex(ValueError, "integer"): config._validate()
         for changes in ({"feedback_timeout_s": .2}, {"stall_after_s": float("nan")},
-                        {"reference_lead_deg": 1}):
+                        {"reference_lead_deg": 1}, {"feedback_lost_s": .05},
+                        {"escalation_events": 0}):
             with self.assertRaises(ValueError): ProtectionConfig(**changes)
         motor = Motor()
         head = HeadController(motor=motor).open()

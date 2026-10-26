@@ -170,7 +170,7 @@ class Panel(QWidget):
 
         motor_box = QGroupBox("两轴电机")
         motor_layout = QVBoxLayout(motor_box)
-        motor_layout.addWidget(QLabel("默认保持 yaw 0° / pitch 35°；yaw ±60°，pitch 目标上限45°"))
+        motor_layout.addWidget(QLabel("默认回到已存零位 yaw 0° / pitch 0°；yaw ±60°，pitch 目标上限45°"))
         btn_row = QHBoxLayout()
         self.btn_en = QPushButton("使能并到保持位")
         self.btn_dis = QPushButton("失能")
@@ -319,8 +319,10 @@ class Panel(QWidget):
             self.yaw.set_meas(f"{state.measured.yaw_deg:.1f}°")
             self.pitch.set_meas(f"{state.measured.pitch_deg:.1f}°")
         labels = {"moving": "按 SDK 轨迹移动", "hold": "保持当前位置", "following": "跟随中",
-                  "source_hold": "输入暂停，保持目标", "off": "未使能"}
-        self.status.setText(labels.get(state.phase, state.phase) + (" · " + state.reason if state.reason else ""))
+                  "source_hold": "输入暂停，保持目标", "degraded": "降级（保持使能，等待恢复）",
+                  "off": "未使能"}
+        notice = {1: "[扰动] ", 2: "[降级] "}.get(state.level, "")
+        self.status.setText(notice + labels.get(state.phase, state.phase) + (" · " + state.reason if state.reason else ""))
 
     def toggle_log(self) -> None:
         if self.logging:

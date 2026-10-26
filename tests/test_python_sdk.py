@@ -8,14 +8,14 @@ from f32c import _CConfig, _motor_library
 
 
 if __name__ == "__main__":
-    assert f32c.DEFAULT_HOLD_POSITION == f32c.State(0, 35)
+    assert f32c.DEFAULT_HOLD_POSITION == f32c.State(0, 0)
     config = f32c.Config()
     lib = _motor_library()
     lib.f32c_config_defaults.argtypes = [ctypes.POINTER(_CConfig)]
     native = _CConfig()
     lib.f32c_config_defaults(ctypes.byref(native))
-    assert config.travel_rpm == native.travel_rpm == 5
-    assert config.accel == native.accel == 1
+    assert config.travel_rpm == native.travel_rpm == 15
+    assert config.accel == native.accel == 2
     assert (config.id_yaw, config.id_pitch) == (native.id_yaw, native.id_pitch) == (1, 2)
     names = ("yaw_speed_kp", "yaw_speed_ki", "yaw_pos_kp", "yaw_pos_ki",
              "pitch_speed_kp", "pitch_speed_ki", "pitch_pos_kp", "pitch_pos_ki")

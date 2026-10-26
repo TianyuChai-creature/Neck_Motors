@@ -1,4 +1,4 @@
-"""Hold yaw=0, pitch=35 until released; use the installed wheel and an unlock button."""
+"""Hold the stored zero pose yaw=0, pitch=0 until released; use the installed wheel and an unlock button."""
 import csv
 from dataclasses import asdict
 from datetime import datetime
@@ -50,7 +50,7 @@ def run(device, directory, stop_after=None):
     class Window(QWidget):
         def closeEvent(self,event):
             release('released');event.accept()
-    window=Window();window.setWindowTitle('固定位置保持 · yaw 0° / pitch 35°')
+    window=Window();window.setWindowTitle('固定位置保持 · yaw 0° / pitch 0°')
     layout=QVBoxLayout(window);layout.addWidget(label);layout.addWidget(button)
     button.clicked.connect(window.close);window.resize(430,180)
     def volts():

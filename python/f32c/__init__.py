@@ -24,8 +24,8 @@ class Config:
     baud: int = 115200
     id_yaw: int = 1
     id_pitch: int = 2
-    travel_rpm: int = 5
-    accel: int = 1
+    travel_rpm: int = 15
+    accel: int = 2
     yaw_speed_kp: int = 40
     yaw_speed_ki: int = 4
     yaw_pos_kp: int = 42
@@ -59,7 +59,7 @@ class State:
     pitch_deg: float
 
 
-DEFAULT_HOLD_POSITION = State(0.0, 35.0)
+DEFAULT_HOLD_POSITION = State(0.0, 0.0)  # the stored zero pose
 
 
 class _CConfig(C.Structure):

@@ -13,8 +13,8 @@ public:
         int baud = 115200;
         uint8_t id_yaw = 1;
         uint8_t id_pitch = 2;
-        int travel_rpm = 5;
-        uint16_t accel = 1;
+        int travel_rpm = 15;
+        uint16_t accel = 2;
         // Bench profile: return-to-zero and short holds passed; continuous tracking needs validation.
         uint16_t yaw_speed_kp = 40;
         uint16_t yaw_speed_ki = 4;

@@ -6,10 +6,10 @@
 | --- | ---: | ---: |
 | 速度 KP / KI | 40 / 4 | 10 / 4 |
 | 位置 KP / KI | 42 / 0 | 40 / 0 |
-| 电机目标速度参数 | 5 RPM | 5 RPM |
+| 电机目标速度参数 | 5 RPM | 15 RPM（未发布改动，未实机验证） |
 | 电机加速度参数 | 1转/s² | 1转/s² |
 | `HeadController()` 默认目标范围 | −60°～60° | −180°～45° |
-| 默认软件参考速度 / 加速度上限 | 30°/s / 360°/s² | 30°/s / 360°/s² |
+| 默认软件参考速度 / 加速度上限 | 30°/s / 360°/s² | 90°/s / 720°/s²（未发布改动，未实机验证） |
 
 使用单圈直通模式 `0004`。电机参数和软件参考限制是两层约束，不能将它们等同于实际电机速度。独立 `TrackingConfig` 仍保留通用算法默认值；如果主仓显式传入它，应明确配置30°/s、360°/s²及范围，不能继续套用旧的120/600或180/1800高速配置。
 
@@ -49,7 +49,7 @@ def follow_quest(take_latest_new_sample, may_send, running, device=None):
             time.sleep(max(0, 1 / 30 - (time.monotonic() - started)))
 ```
 
-控制周期建议约30 Hz，实际包含串口读写耗时；不要在此线程阻塞等待网络或相机。`tick()` 应持续调用，即使没有新Quest样本。超过100 ms的活跃控制间隔会故障并尝试失能。
+控制周期建议约30 Hz，实际包含串口读写耗时；不要在此线程阻塞等待网络或相机。`tick()` 应持续调用，即使没有新Quest样本。超过100 ms的活跃控制间隔按1级扰动处理（暂停并重新同步，不失能），达到1 s或30 s内累计6次才升级为故障。
 
 首个新 `set_target()` 会覆盖使能后的默认待机目标；后续样本采用 latest-wins，不排队执行过期目标。不要每帧调用 `enable()`、`move_to()` 或重复发送旧包刷新时间，也不要在 SDK 外再叠加一套滤波/轨迹。
 
@@ -64,7 +64,7 @@ def follow_quest(take_latest_new_sample, may_send, running, device=None):
 
 ## 待机、回零与底层API
 
-`DEFAULT_HOLD_POSITION` 仍是 yaw=0°、pitch=35°。独立UI调用 `HeadController.enable()` 后持续 `tick()`，会前往该位置；上面的Quest循环调用 `hold()` 取消这段自动移动。显式回零使用 `head.move_to(0, 0)` 并持续 `tick()`，不要与实时输入竞争。
+`DEFAULT_HOLD_POSITION` 现为已存零位 yaw=0°、pitch=0°。独立UI调用 `HeadController.enable()` 后持续 `tick()`，会前往该位置；上面的Quest循环调用 `hold()` 取消这段自动移动。显式回零使用 `head.move_to(0, 0)` 并持续 `tick()`，不要与实时输入竞争。
 
 低层 `Gimbal2Dof.enable()` 继续保持当前位置；`enable_at(yaw,pitch)` 和 `set_deg()` 是直接目标接口，复现本轮低层测试时可用，但不提供流式输入新鲜度、主机轨迹和控制器反馈保护。默认保持坐标不应作为Quest样本上的强制常量。
 

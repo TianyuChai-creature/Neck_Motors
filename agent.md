@@ -4,7 +4,7 @@
 
 | 项 | 值 |
 | --- | --- |
-| 版本 | v4.2 |
+| 版本 | v4.3 |
 | 状态 | 活文档，施工中实时维护 |
 | 最近更新 | 2026-10-26 |
 | 电机手册 | `docs/F32C无刷电机使用手册-2026-07-21.pdf` |
@@ -339,7 +339,7 @@ python3 -m pip install -r tools/requirements.txt     # PySide6>=6.5,<7
 python3 tools/ui.py [/dev/ttyACM0]
 ```
 
-界面启动时连接电机，初始失能；“使能并到零位”会运动，确认活动空间后再点。
+界面启动时连接电机，初始失能；“使能并到零位”会运动，确认活动空间后再点。滑条是实时输入流：使能后每个周期调用 `neck.set_target()`（与上游跟随同路径），“暂停输入”用于验证 0.2 s `stale`；“写零位”先 `hold()` 再 `set_zero()`。
 
 ## 6. 变更记录
 
@@ -392,3 +392,4 @@ python3 tools/ui.py [/dev/ttyACM0]
 | 2026-10-26 | v4.0 | 分支 `refactor/two-layer`：重构为 `neck.driver`（硬件）+ `neck.control`（Neck/Trajectory/Supervisor）两层，纯 Python 标准库；删除 C++ SDK、C ABI、ZED 相机、旧 `f32c` Python 包与 wheel；UI/整定脚本迁至 `tools/` 且只依赖 `neck`；旧文档归档到 `docs/archive/`，新增 `docs/设计说明.md`。回溯点 tag `pre-refactor`（11985db）。Driver 角度折叠到 −180…180，角度编码四舍五入。离线 116 项测试通过，**未通电实测**；提速与直通模式 speed/accel 是否生效待台架。 |
 | 2026-10-26 | v4.1 | 补回写零位：`Driver.set_zero()/save()`（手册 4.2.10 帧 `7A addr 0A`、4.2.8 帧 `7A addr 08`，黄金向量已测）、`Neck.set_zero()`（两轴一起，使能保持时零点帧后立即改瞄 0°，读回校验，失败失能）、`tools/ui.py` “写零位（两轴）”按钮带确认框。离线 139 项测试通过，**未通电**；写零瞬间是否会冲、保存帧是否连带写入加速度，待台架确认。 |
 | 2026-10-26 | v4.2 | 新增 `docs/架构图.md`（Mermaid：分层依赖、tick 时序、使能、写零位、状态机、保护分级）与 `tools/replay.py` → `docs/回放.html`（真实 Driver/Neck 对假总线跑剧本的单文件回放页）；假总线新增可选一阶滞后 `lag`。写零位后清掉旧目标显示。无真机改动。 |
+| 2026-10-26 | v4.3 | `tools/ui.py` 滑条改为持续 `set_target`（跟随路径），去掉 `move_to` 逻辑；新增“暂停输入”按钮验证 `stale`；写零位前先 `hold()`。UI 因此可覆盖点对点与跟随两条路径做验收。离线测试通过，未通电。 |

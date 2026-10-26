@@ -38,16 +38,15 @@ def wrap180(deg: float) -> float:
 
 
 class AxisRow(QWidget):
-    def __init__(self, name: str, on_change):
+    def __init__(self, name: str):
         super().__init__()
         self.name = name
-        self._on_change = on_change
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(QLabel(name))
         self.slider = QSlider(Qt.Orientation.Horizontal)
         self.slider.setRange(*((-600, 600) if name == "yaw" else (-1800, 450)))
-        self.slider.valueChanged.connect(self._changed)
+        self.slider.valueChanged.connect(lambda _v: self.cmd.setText(f"{self.deg():.1f}°"))
         layout.addWidget(self.slider, 1)
         self.cmd = QLabel("0.0°")
         self.cmd.setMinimumWidth(56)
@@ -68,16 +67,13 @@ class AxisRow(QWidget):
     def set_meas(self, text: str) -> None:
         self.meas.setText(text)
 
-    def _changed(self, _v: int) -> None:
-        self.cmd.setText(f"{self.deg():.1f}°")
-        self._on_change(self.name)
-
 
 class Panel(QWidget):
     def __init__(self, neck: Neck, log_path: Path | None = None):
         super().__init__()
         self.neck = neck
         self.log_path = log_path
+        self.feeding = True         # the sliders are a live input stream, like an upstream source
         self.setWindowTitle("F32C Neck")
 
         self.status = QLabel("未使能（硬件状态未确认）")
@@ -94,20 +90,23 @@ class Panel(QWidget):
         self.btn_en = QPushButton("使能并到零位")
         self.btn_dis = QPushButton("失能")
         self.btn_home = QPushButton("到 0°")
+        self.btn_feed = QPushButton("暂停输入")
+        self.btn_feed.setToolTip("停止发送目标，约 0.2 秒后进入“输入过期”并保持位置；再点恢复")
         self.btn_zero = QPushButton("写零位（两轴）")
         self.btn_zero.setToolTip("把当前位置写成电机的 0° 并保存到 flash，不可撤销。仅在失能或保持状态可用")
         self.btn_en.clicked.connect(self.enable)
         self.btn_dis.clicked.connect(self.disable)
         self.btn_home.clicked.connect(self.go_zero)
         self.btn_zero.clicked.connect(self.write_zero)
-        for button in (self.btn_en, self.btn_dis, self.btn_home, self.btn_zero):
+        self.btn_feed.clicked.connect(self.toggle_feed)
+        for button in (self.btn_en, self.btn_dis, self.btn_home, self.btn_feed, self.btn_zero):
             buttons.addWidget(button)
         layout.addLayout(buttons)
-        self.yaw = AxisRow("yaw", self.send)
-        self.pitch = AxisRow("pitch", self.send)
+        self.yaw = AxisRow("yaw")
+        self.pitch = AxisRow("pitch")
         layout.addWidget(self.yaw)
         layout.addWidget(self.pitch)
-        layout.addWidget(QLabel("目标即时更新，接近目标时平滑减速"))
+        layout.addWidget(QLabel("滑条是实时输入：使能后每个周期都发送一次目标（set_target），与上游跟随一致"))
         self.log_label = QLabel(f"Log: {log_path.name}" if log_path else "Log: 关闭")
         layout.addWidget(self.log_label)
 
@@ -124,18 +123,13 @@ class Panel(QWidget):
 
     # ---- actions ---------------------------------------------------------------------------
 
-    def send(self, _axis: str = "") -> None:
-        if not self.neck.enabled:
-            return
-        try:
-            self.neck.move_to(self.yaw.deg(), self.pitch.deg())
-        except NeckError as exc:
-            self.fault(exc.reason)
-
     def go_zero(self) -> None:
         self.yaw.set_deg(0)
         self.pitch.set_deg(0)
-        self.send()
+
+    def toggle_feed(self) -> None:
+        self.feeding = not self.feeding
+        self.btn_feed.setText("暂停输入" if self.feeding else "恢复输入")
 
     def enable(self) -> None:
         try:
@@ -166,14 +160,19 @@ class Panel(QWidget):
         if not self.confirm_zero(f"把当前位置写成 0° 并保存到电机 flash（不可撤销）。\n"
                                  f"当前实测：yaw {pose.yaw:.1f}°，pitch {pose.pitch:.1f}°"):
             return
+        was_feeding, self.feeding = self.feeding, False
         try:
+            if self.neck.enabled:
+                self.neck.hold()                # stop following; zeroing needs a held pose
             snapshot = self.neck.set_zero()
         except NeckError as exc:
             if self.neck.phase == "fault":
                 self.fault(exc.reason)
             else:
-                self.status.setText("写零位未完成：" + exc.reason)
+                self.status.setText("写零位未完成（需先稳定，稍后再点）：" + exc.reason)
             return
+        finally:
+            self.feeding = was_feeding
         self.yaw.set_deg(0)
         self.pitch.set_deg(0)
         self.show_state(snapshot)
@@ -192,13 +191,16 @@ class Panel(QWidget):
 
     def step_targets(self) -> None:
         self._step()
-        self.btn_zero.setEnabled(self.neck.phase in ("off", "hold"))
+        self.btn_zero.setEnabled(self.neck.phase in ("off", "hold", "moving", "following", "stale"))
+        self.btn_feed.setEnabled(self.neck.enabled)
 
     def _step(self) -> None:
         if not self.neck.enabled:
             self.poll_motors()
             return
         try:
+            if self.feeding:
+                self.neck.set_target(self.yaw.deg(), self.pitch.deg())
             self.show_state(self.neck.tick())
         except NeckError as exc:
             self.fault(exc.reason)
@@ -218,6 +220,8 @@ class Panel(QWidget):
             self.yaw.set_meas(f"{snapshot.measured.yaw:.1f}°")
             self.pitch.set_meas(f"{snapshot.measured.pitch:.1f}°")
         notice = {1: "[扰动] ", 2: "[降级] "}.get(snapshot.level, "")
+        if not self.feeding and snapshot.phase not in ("off", "fault"):
+            notice += "[输入已暂停] "
         reason = " · " + snapshot.reason if snapshot.reason else ""
         self.status.setText(notice + PHASES.get(snapshot.phase, snapshot.phase) + reason)
 
@@ -260,7 +264,7 @@ def main() -> None:
     neck = Neck(Driver.open(DriverConfig(port=port, log_path=str(log_path))))
     try:
         window = Panel(neck, log_path)
-        window.resize(560, 260)
+        window.resize(640, 260)
         window.show()
         code = app.exec()
     finally:

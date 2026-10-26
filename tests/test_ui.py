@@ -54,24 +54,40 @@ class UiTests(unittest.TestCase):
         self.assertFalse(self.neck.enabled)
         self.assertEqual(self.driver.sent, [])
 
-    def test_enable_goes_to_zero_through_the_trajectory(self):
+    def test_enable_goes_to_zero_through_the_trajectory_while_the_sliders_stream_zero(self):
         self.panel.enable()
         self.assertEqual(self.neck.snapshot.target, Pose(0, 0))
         self.assertEqual((self.panel.yaw.deg(), self.panel.pitch.deg()), (0, 0))
         self.assertEqual(self.driver.sent, [])          # nothing sent until the first tick
-        self.run_ticks(500, until=lambda: self.neck.snapshot.reason == "target_reached")
-        self.assertEqual(self.neck.snapshot.reason, "target_reached")
+        self.run_ticks(500, until=lambda: abs(self.driver.measured.yaw) < .3 and abs(self.driver.measured.pitch) < .3)
+        self.assertLess(abs(self.driver.measured.pitch), .3)
+        self.assertEqual(self.neck.snapshot.phase, "following")
         self.assertEqual(self.driver.disables, 0)
-        self.assertIn("保持当前位置", self.panel.status.text())
+        self.assertIn("跟随中", self.panel.status.text())
 
-    def test_slider_moves_the_neck_and_pitch_is_clipped(self):
+    def test_sliders_are_a_live_stream_and_pitch_is_clipped(self):
         self.panel.enable()
         self.panel.pitch.set_deg(90)
-        self.panel.send("pitch")
+        self.run_ticks(1)
         self.assertEqual(self.neck.snapshot.target.pitch, 45)
         self.panel.pitch.set_deg(-20)
-        self.panel.send("pitch")
-        self.assertEqual(self.neck.snapshot.target.pitch, -20)
+        self.panel.yaw.set_deg(10)
+        self.run_ticks(1)
+        self.assertEqual(self.neck.snapshot.target, Pose(10, -20))
+
+    def test_pause_input_goes_stale_and_resume_follows_again(self):
+        self.panel.enable()
+        self.run_ticks(5)
+        self.panel.toggle_feed()
+        self.assertEqual(self.panel.btn_feed.text(), "恢复输入")
+        self.run_ticks(12)                              # > 0.2 s without a target
+        self.assertEqual(self.neck.snapshot.phase, "stale")
+        self.assertIn("输入已暂停", self.panel.status.text())
+        self.panel.toggle_feed()
+        self.panel.yaw.set_deg(5)
+        self.run_ticks(2)
+        self.assertEqual(self.neck.snapshot.phase, "following")
+        self.assertEqual(self.neck.snapshot.target.yaw, 5)
 
     def test_disable_button_turns_torque_off(self):
         self.panel.enable()
@@ -108,7 +124,14 @@ class UiTests(unittest.TestCase):
         self.assertIn("硬件状态未知", errors.getvalue())
 
 
-    def test_write_zero_needs_confirmation_and_is_only_offered_off_or_holding(self):
+    def settle_at(self, yaw, pitch):
+        self.panel.yaw.set_deg(yaw)
+        self.panel.pitch.set_deg(pitch)
+        self.run_ticks(600, until=lambda: abs(self.driver.measured.yaw - yaw) < .2
+                       and abs(self.driver.measured.pitch - pitch) < .2)
+        self.run_ticks(10)
+
+    def test_write_zero_needs_confirmation_and_is_offered_unless_degraded_or_faulted(self):
         self.panel.step_targets()
         self.assertTrue(self.panel.btn_zero.isEnabled())           # off
         with patch.object(self.panel, "confirm_zero", return_value=False) as ask:
@@ -116,30 +139,42 @@ class UiTests(unittest.TestCase):
         self.assertIn("yaw 30.0", ask.call_args[0][0])
         self.assertEqual((self.driver.zeros, self.driver.saves), (0, 0))
         self.panel.enable()
-        self.run_ticks(1)
-        self.assertFalse(self.panel.btn_zero.isEnabled())          # moving
-        self.run_ticks(500, until=lambda: self.neck.snapshot.phase == "hold")
-        self.assertTrue(self.panel.btn_zero.isEnabled())           # holding still
+        self.run_ticks(3)
+        self.assertTrue(self.panel.btn_zero.isEnabled())           # following
+        self.driver.read_error = True
+        self.run_ticks(60)
+        self.assertFalse(self.neck.enabled)
+        self.assertFalse(self.panel.btn_zero.isEnabled())          # fault
 
-    def test_write_zero_while_holding_updates_sliders_and_status(self):
+    def test_write_zero_while_following_holds_zeroes_and_resumes_the_stream_at_the_new_zero(self):
         self.panel.enable()
-        self.run_ticks(500, until=lambda: self.neck.snapshot.phase == "hold")
-        self.driver.measured = self.driver.command = Pose(2.0, -1.0)
-        self.neck._command = Pose(2.0, -1.0)
+        self.settle_at(10.0, 5.0)
         with patch.object(self.panel, "confirm_zero", return_value=True):
             self.panel.write_zero()
         self.assertEqual((self.driver.zeros, self.driver.saves, self.driver.disables), (1, 1, 0))
         self.assertIn("零位已写入", self.panel.status.text())
         self.assertEqual((self.panel.yaw.deg(), self.panel.pitch.deg()), (0, 0))
-        self.assertTrue(self.neck.enabled)
+        self.assertTrue(self.panel.feeding)
+        self.run_ticks(5)
+        self.assertEqual(self.neck.snapshot.phase, "following")
+        self.assertEqual(self.neck.snapshot.target, Pose(0, 0))
+        self.assertLess(abs(self.driver.measured.yaw), .3)
 
-    def test_refused_or_failed_zero_is_shown_and_a_fault_is_recorded(self):
+    def test_unsettled_neck_refuses_zero_and_keeps_following(self):
         self.panel.enable()
+        self.settle_at(10.0, 5.0)
+        self.driver.follow = False
+        self.driver.measured = Pose(15.0, 5.0)      # something is pushing the neck away
         with patch.object(self.panel, "confirm_zero", return_value=True):
-            self.panel.write_zero()                                 # still moving: refused
+            self.panel.write_zero()
         self.assertIn("写零位未完成", self.panel.status.text())
+        self.assertEqual(self.driver.zeros, 0)
         self.assertTrue(self.neck.enabled)
-        self.run_ticks(500, until=lambda: self.neck.snapshot.phase == "hold")
+        self.assertTrue(self.panel.feeding)
+
+    def test_failed_zero_write_faults_and_records(self):
+        self.panel.enable()
+        self.settle_at(3.0, 2.0)
         self.driver.zero_error = True
         with patch.object(self.panel, "confirm_zero", return_value=True):
             self.panel.write_zero()

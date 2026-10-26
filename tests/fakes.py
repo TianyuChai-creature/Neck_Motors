@@ -56,7 +56,8 @@ class FakeDriver:
             raise DriverError("read timeout")
         if self.follow and self.state is DriverState.ARMED:
             self.measured = self.command
-        return self.measured
+        return Pose((self.measured.yaw + 180.0) % 360.0 - 180.0,
+                    (self.measured.pitch + 180.0) % 360.0 - 180.0)
 
     def disable(self) -> None:
         self._usable()

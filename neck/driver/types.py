@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from enum import Enum
+from numbers import Real
 
 __all__ = ["DriverConfig", "DriverError", "DriverState", "Gains", "Pose"]
 
@@ -81,10 +82,16 @@ class DriverConfig:
 
 
 def finite(value, name: str) -> float:
-    """Validate an angle argument; bool and non-numbers are rejected."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+    """Validate a number argument; bool and non-numbers are rejected."""
+    try:
+        if isinstance(value, bool) or not isinstance(value, Real):
+            raise TypeError
+        result = float(value)
+    except (TypeError, OverflowError):
+        raise ValueError(f"{name} must be a finite number") from None
+    if not math.isfinite(result):
         raise ValueError(f"{name} must be a finite number")
-    return float(value)
+    return result
 
 
 def timeout_ok(value) -> float:

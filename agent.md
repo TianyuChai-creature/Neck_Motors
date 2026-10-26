@@ -4,9 +4,9 @@
 
 | 项 | 值 |
 | --- | --- |
-| 版本 | v3.3 |
+| 版本 | v4.0 |
 | 状态 | 活文档，施工中实时维护 |
-| 最近更新 | 2026-10-17 |
+| 最近更新 | 2026-10-26 |
 | 电机手册 | `docs/F32C无刷电机使用手册-2026-07-21.pdf` |
 | 自动注入 | Grok 默认加载的是 `AGENTS.md` / `AGENT.md`，**不是**本文件名。若要每轮会话自动读入，把本文件改名为 `AGENTS.md`，或在仓库根另放一份只含「先读 `agent.md`」的 `AGENTS.md`。 |
 
@@ -199,7 +199,7 @@
 - 无论成败，结束前失能，并在摘要里写明失能是否成功。
 
 禁止：
-- cmake 重构、改 BCC、改 PID、改地址、恢复出厂——这些不是台架任务。
+- 架构重构、改 BCC、改 PID、改地址、恢复出厂——这些不是台架任务。
 - 把点动写成「标定工作流」。没有单独登记的标定角色之前，只做扫口/使能/失能/指定的单条运动。
 ```
 
@@ -246,17 +246,17 @@
 | 参数 | 值 | 备注 |
 | --- | --- | --- |
 | 电机数量 | 2，并联均在线 | ID=1 与 ID=2 同时应答，无撞帧 |
-| ID 列表与关节名 | **yaw = ID=1**，**pitch = ID=2** | SDK `Gimbal2Dof::Config::id_yaw/id_pitch`。改地址帧 BCC 用全字节异或：`7A 02 0D 01 74 7B` |
-| 串口设备 | C++ SDK 默认自动识别；当前枚举为 `/dev/ttyACM0` | `Config::device` 为空时扫描 `/dev/serial/by-id/*`、`/dev/ttyACM*`、`/dev/ttyUSB*`，用 ID=1/2 机械角度回读确认；也可显式指定路径 |
+| ID 列表与关节名 | **yaw = ID=1**，**pitch = ID=2** | `DriverConfig.yaw_id / pitch_id`。改地址帧 BCC 用全字节异或：`7A 02 0D 01 74 7B` |
+| 串口设备 | 默认自动识别；当前枚举为 `/dev/ttyACM0` | `DriverConfig.port` 为空时扫描 `/dev/serial/by-id/*`、`/dev/ttyACM*`、`/dev/ttyUSB*`，用 ID=1/2 机械角度回读确认；也可显式指定路径 |
 | 母线电压 | ID=1 ≈ 11.60 V，ID=2 ≈ 11.58 V（各 10/10 合法） | 手册 8–15 V |
 | 机械限位 / 实体阻挡 | 取消低头角度诊断；新 pitch 目标最多 +45°；初始反馈 >45°按实测保持 | 2026-10-17 用户覆盖旧 40°/43°判定；45°只截断新目标，不改反馈或人工零位 |
-| 零点 / pitch 方向 | 用户已手动调整零位；pitch 增大为低头，减小为抬头 | 最新用户说明更正此前相反记录；SDK 保留原始方向，Quest pitch 向上为正时应反号映射 |
+| 零点 / pitch 方向 | 用户已手动调整零位；pitch 增大为低头，减小为抬头 | 最新用户说明更正此前相反记录；`neck` 保留电机原始方向，Quest pitch 向上为正时应反号映射 |
 | yaw 方向 / 线缆负载 | 第一人称 yaw 增大向左，减小向右；相机线缆可能增加旋转阻力 | 保持当前线缆条件参与整定；克服可运动的阻力与顶住实体极限分别处理 |
 | 本轮验收范围 | yaw 需覆盖 −60°～60°；新 pitch 目标不超过 45° | 2026-10-12 用户明确；方向和 SDK 轴映射按用户约定继续执行，不以未确认的轴映射猜测修改映射 |
 | 本轮自动整定 | 用户授权自动完成真机 PI 整定；用户确认无机械限位且不填写范围 | 2026-10-10；不改 SDK 默认 PI，不置零、不保存参数；整定和验证分别记录 |
 | I 工作上限（软件） | 待填 | 手册最大 1.5 A，额定 0.4 A |
 | 控制频率 | 待填 | 手册建议 100 Hz |
-| 总线质量 | 并联后 ID=1/2 电压 10/10、机械角 5/5 均合法 | 分 ID 后撞帧消失；现有 `f32c_ping` 自动识别真机通过 |
+| 总线质量 | 并联后 ID=1/2 电压 10/10、机械角 5/5 均合法 | 分 ID 后撞帧消失；旧版 `f32c_ping` 自动识别真机通过（已随 C++ 删除） |
 
 已确认项在本节登记；待确认项不得用手册默认值替代。变更在 §6 记一笔。
 
@@ -264,58 +264,47 @@
 
 ## 5. 当前仓库设计与运行链路
 
+完整设计见 `docs/设计说明.md`（含伪代码与状态机）。本节只登记现场仍需遵守的事实。
+
 ### 5.1 分层
 
 | 层 | 文件 | 当前职责 |
 | --- | --- | --- |
-| 协议层 | `include/f32c/protocol.hpp` | 组帧/解析；帧头 `0x7A`、地址、功能码、数据、BCC 异或、帧尾 `0x7B`；支持当前控制帧长度 5/6/7/9 字节 |
-| 串口层 | `src/serial_port.hpp/.cpp` | Linux 非阻塞 TTL 串口；115200、8N1；完整写出；读超时；输入缓存清理；可选原始 TX/RX 日志 |
-| 单电机层 | `src/motor.hpp/.cpp` | 按单个电机 ID 发送使能、失能、模式、速度、加速度、PI、单圈目标角和机械角反馈查询 |
-| 两轴封装 | `include/f32c/gimbal.hpp`、`src/gimbal.cpp` | 一个共享串口、两个唯一 ID：yaw/pitch；按帧串行收发 |
-| 可选相机 | `include/f32c/camera/zed_mini.hpp`、`src/zed_mini.cpp` | 独立 `f32c::camera::ZedMini` SDK；HD720@60、无深度、CPU BGRA8 左/右/并排画面 |
-| UI | `examples/ui.py` | 电机控制与 ZED 画面分区；相机按需连接，支持视图切换、实时画面和常用视频属性 |
-| 示例/验证 | `examples/*.cpp`、`tests/test_protocol.cpp` | ping、保持、置零示例；协议黄金向量和坏 BCC 测试 |
+| 协议 | `neck/driver/protocol.py` | 组帧/解析；帧头 `0x7A`、地址、功能码、数据、BCC 异或、帧尾 `0x7B`；机械角反馈折叠到 −180…180 |
+| 串口 | `neck/driver/port.py` | termios 非阻塞 TTL；115200、8N1；带绝对截止时间的读写；输入缓存清理；十六进制日志 |
+| 单电机 | `neck/driver/motor.py` | 使能/失能、PI、速度/加速度、单圈直通目标角、机械角查询；命令间隔 8 ms |
+| 驱动（层 1） | `neck/driver/device.py`、`types.py` | `Driver`：两轴、`DriverState`、串口自动识别、使能失败回滚、关闭兜底 |
+| 轨迹 | `neck/control/trajectory.py` | 纯数学：限位、限速、限加速、平滑；无 I/O 无时钟 |
+| 保护 | `neck/control/supervisor.py` | 纯判断：level 0/1/2/3；无 I/O 无时钟 |
+| 控制（层 2） | `neck/control/neck.py` | `Neck`：`enable/set_target/move_to/hold/tick/disable`，phase 状态机 |
+| 工具 | `tools/ui.py`、`tools/tune.py` | PySide6 面板；固定负载 PI 实验（默认只预览）；只依赖 `neck` 包 |
+| 测试 | `tests/` | pty 假总线 + FakeDriver，无需硬件；`python3 -m unittest discover -s tests -t .` |
 
-### 5.2 C++ SDK API
+### 5.2 典型调用
 
-| API | 当前行为 |
-| --- | --- |
-| `Gimbal2Dof()` | 使用当前默认配置创建两轴对象 |
-| `Gimbal2Dof(Config cfg)` | 使用自定义串口、ID、速度、加速度和 PI 参数创建对象 |
-| `open()` | 显式路径直接打开；路径为空时自动扫描串口并用 ID=1/2 只读回读确认 |
-| `close()` / `close_checked()` | C++ 保留 void 关闭并新增 bool 结果；已使能或待清理时有界失能，失败仍关闭且保留未知状态，void/析构失败写 stderr |
-| `ping()` | 依次读取 yaw/pitch 机械角，要求两台都正常返回 |
-| `enable()` | 先读取保持位置，失能下发完整 PI，再逐轴使能、选单圈直通模式、下发速度/初始目标/加速度 |
-| `enable_at(yaw, pitch)` | 以指定角度作为初始目标执行相同启动顺序；目标立即生效，无轨迹或机械范围限制 |
-| `disable()` | 两轴均尝试发送失能；失败暂停位置/PI下发、保留待清理标记及硬件状态未知，关闭时再次尝试 |
-| `set_deg(yaw, pitch)` | 依次下发 yaw、pitch 单圈目标角 |
-| `set_yaw_deg(deg)` / `set_pitch_deg(deg)` | 只下发对应轴的单圈目标角 |
-| `read(State*)` | 依次读取两台机械角，任一失败则整体失败 |
-| `set_zero()` | 两台设置单圈零点并保存参数 |
-| `last_error()` | 返回最近一次失败原因；Python 接口据此抛出 `F32CError` |
-
-新增 `set_pi(axis, speed_kp, speed_ki, pos_kp, pos_ki)` 运行时 PI 接口（C++/C 轴 0=yaw、1=pitch；Python 用轴名），要求已使能，保留模式与目标、不保存参数。默认值仍由 `Config` 提供；加速度/模式/地址设置、多圈位置和原始帧收发仍未公开。
+```python
+from neck.driver import Driver
+from neck.control import Neck
+with Neck(Driver.open()) as neck:
+    neck.enable()                 # 实测位姿使能 → 平滑回已存零位 (0, 0)
+    neck.set_target(yaw, pitch)   # 最新目标胜出；0.2 s 无更新 → stale
+    neck.tick()                   # 同一线程，约 20–33 ms 一次
+```
 
 ### 5.3 两电机控制模型
 
-- 两台电机共用一条 TTL UART 总线，不使用双串口，也没有双电机合并帧。
-- 每条帧通过地址区分目标：yaw=`ID 1`，pitch=`ID 2`；控制器先发一台，再间隔发送另一台。
-- `set_deg(yaw, pitch)` 实际按 yaw 后 pitch 顺序发送两个单圈位置帧。
-- `read()` 和 `ping()` 依次查询两台机械角度，并检查返回帧地址、功能码、BCC 和数据长度。
-- 典型顺序：`open → ping → enable → set_deg/read → disable`。`enable()` 会选单圈直通位置模式、下发速度/加速度/PI，并把当前角度作为保持目标。
-- Python `HeadController` 组合原有纯 `HeadTracker` 与底层电机 I/O；UI 和集成只负责新输入、身份/授权及状态展示，不重复实现滤波、轨迹、发送滞环或反馈保护。
-- HeadController.enable() 从实测出发，默认前往 yaw=0°、pitch=35°并保持；默认位置由 DEFAULT_HOLD_POSITION 给出。低层 Gimbal2Dof.enable() 仍原位保持，显式 move_to(0,0) 可回已有零位。零位不自动写入。
-- 新 pitch 期望最多 +45°，初始大于45°不诊断；明确向内移动时允许初始中间参考仍大于45°。UI yaw±60°，SDK底层setter不施加本机范围。
-- 默认软件最高速度30°/s、加速度360°/s²；UI和集成计划约30Hz，实际包含串口耗时，保留8ms命令间隔，不宣称50Hz。
-- HeadController统一反馈预算、超前9°等待、误差低于3°清除等待标记、无进展及保持振荡保护；按用户要求删除误差大小直接失能 gate。只以实测到位判断移动完成；故障停目标并尝试失能，恢复需要显式操作。细节见SDK说明§4.2。
-- wheel包含上述控制入口；宿主保留输入授权、设备所有权和操作员恢复。固件/供电承担电流限制和最终断能。
+- 两台电机共用一条 TTL UART 总线；yaw=`ID 1`，pitch=`ID 2`；没有合并帧，没有 ACK，写成功只代表串口写入成功。
+- `Driver.set()` 按 yaw、pitch 顺序各发一帧单圈直通位置帧（`None` 表示该轴不动）；`read()` 两轴共享一个截止时间。
+- `enable()`：失能下发全部 PI → 逐轴使能 → 选 `0004` 单圈直通 → 下发速度/加速度/初始目标（实测位姿）。任何一步失败都回滚并失能，失能也失败则 `DriverState.UNKNOWN`。
+- `Neck.enable()` 在使能后用轨迹回到**已存零位** yaw=0°、pitch=0°；零位由用户手动写入 flash，仓库不提供置零/保存。
+- 默认限位 pitch −180°…45°（只截断新目标，不判断反馈，初始超限不诊断）、yaw ±60°；软件 90°/s、720°/s²。
+- 分级保护：level 1 扰动（本 tick 暂停）→ level 2 降级（保持使能，拉回指令，等稳定）→ level 3 故障（失能并锁存，需 `reset_fault()`）。只以实测到位判断移动完成，不因误差大小直接失能。
 
 ### 5.4 串口自动识别
 
-- `Config::device` 为空时，`Gimbal2Dof::open()` 扫描 `/dev/serial/by-id/*`、`/dev/ttyACM*`、`/dev/ttyUSB*`。
-- 每个候选只发送机械角度查询，要求 ID=1 和 ID=2 都返回合法帧后才选中；不会因识别而使能或运动。
-- 显式填写 `Config::device` 时保持原行为，只打开指定路径，不自动扫描。
-- 当前真机验证：默认 `f32c_ping` 自动识别成功，yaw=`257.3°`、pitch=`13.9°`。
+- `DriverConfig.port` 为空时，`Driver.open()` 扫描 `/dev/serial/by-id/*`、`/dev/ttyACM*`、`/dev/ttyUSB*`。
+- 每个候选只发机械角查询，要求 ID=1 和 ID=2 都返回合法帧才选中；识别过程不使能、不运动。
+- 显式填写 `port` 时只打开该路径。
 
 ### 5.5 当前控制参数
 
@@ -323,64 +312,34 @@
 | --- | ---: | ---: |
 | 速度 KP/KI | `40/4` | `10/4` |
 | 位置 KP/KI | `42/0` | `40/0` |
-| 目标速度 | `5 RPM` | `5 RPM` |
-| 加速度 | `1` | `1` |
-| 上位机最高速度 / 加速度 | `30°/s` / `360°/s²` | `30°/s` / `360°/s²` |
-| 上位机计划周期 | `33 ms` | `33 ms` |
+| 目标速度 | `15 RPM` | `15 RPM` |
+| 加速度 | `2` | `2` |
+| 软件最高速度 / 加速度 | `90°/s` / `720°/s²` | `90°/s` / `720°/s²` |
+| 控制周期 | 约 `20–33 ms` | 约 `20–33 ms` |
 
-0.3.2默认参数采用本轮已完成低层回零及10秒保持的 yaw40/4、42/0和pitch10/4、40/0，5RPM、加速度1；Quest连续跟随尚未实机验收。历史记录：0.2.5 修正 UI 跟随处理，0.2.6 修复写入/清理故障和 UI 置零入口。pitch=0°时两轮 yaw 0°→+60°→−60°→0°及连续拖动模拟通过，固定保持末段峰峰值最大约 0.1°；此前 ±15°双轴动作峰峰值最大约 0.4°。其它 pitch 姿态下的 yaw 全范围、相机并行、断电再上电与绝对刚度未验证。0.2.6 仅新增无硬件故障验收，不能笼统否定已有实机记录或推广到其它工况。历次结果见 `docs/整定记录_2026-10-12.md`。
+PI 沿用 0.3.2 已通过低层回零与 10 秒保持的组合；15 RPM / 加速度 2 / 90°/s 为 v3.4 起的提速设置，**尚未实机验收**。历史整定记录见 `docs/archive/整定记录_2026-10-12.md`。直通模式下 `speed_rpm` / `accel` 是否生效，手册未说明，需台架确认。
 
 ### 5.6 收发错误处理与边界
 
-- 发帧：`write_all()` 使用单调时钟 100 ms 总截止时间，处理短写、持续 `EINTR` / `EAGAIN` 和返回0；不因重试/部分进展重置。没有电机 ACK，写成功只代表串口写入成功。
-- 失能失败保留独立待清理状态，停止位置/PI下发；成功反馈不清掉该标记。C++ `close_checked()` 至多两帧，C `f32c_close_checked()` / Python close / UI 关闭同样一轮两帧，串口等待预算216 ms；被动只读关闭不发失能，另有调度/日志开销。最终失败通过返回值、异常或 stderr 报告，C关闭后错误由 `f32c_last_error(NULL)` 取得；已释放句柄不得重用。
-- 收帧：机械角查询单次最多 `25 ms`，最多两次且共用总预算；按9字节机械反馈扫描，容忍回显、噪声与分片，不将ID120/121误判为短帧；两轴读取共用可配置截止时间。
-- 当前只解析机械角反馈（反馈类型/返回功能码 `0x02`），数据按大端 `int32 / 10` 转为角度。
-- SDK 0.1.1 公开运行时 PI 设置；加速度/模式/地址设置和多圈位置仍未公开。
-- 地址设置手册示例存在 BCC 排版疑点：按当前全字节 XOR，ID=2 改 ID=1 使用 `7A 02 0D 01 74 7B`，不要使用手册中的 `04`。
+- 发帧：单调时钟 100 ms 总截止时间，处理短写、`EINTR` / `EAGAIN` 和返回 0；不因重试重置。命令间隔 8 ms。
+- 失能失败：`DriverState.UNKNOWN`，`set()` 被拒绝，`disable()` 可重试；`close()` 失败抛 `DriverError`（`Neck` 包成 `NeckError`），不把“请求已发送”当作物理失能确认。
+- 收帧：机械角查询单次 25 ms，最多两次；按 9 字节反馈帧扫描，容忍回显、噪声、分片；只解析机械角（功能码/类型 `0x02`），大端 `int32 / 10`。
+- 地址设置手册示例的 BCC 排版有疑点：全字节 XOR，ID=2 改 ID=1 用 `7A 02 0D 01 74 7B`。仓库不提供改地址接口。
 
 ### 5.7 原始串口日志
 
-- C++ API：`Gimbal2Dof::start_log(path)` / `stop_log()`；C 适配：`f32c_start_log()` / `f32c_stop_log()`。
-- 日志默认关闭；开启后记录带毫秒时间戳的 `TX`、`RX`、`FLUSH` 和 `TX_ERROR` 行，内容为原始十六进制字节。
-- UI 使能前自动开启 Log，也可手动点击“开始 Log”，写入 `logs/f32c_ui_<时间戳>.log`；故障附加 `.fault.json`，记录原因、实测、目标、等待轴及失能请求结果，关闭附加 `.close.json`，最终失败写 stderr；不把请求已发送记为物理失能确认。
-- 日志是追加打开，UI 文件名含纳秒片段，避免覆盖历史记录；停止 UI 或关闭窗口前会停止日志。
+- `DriverConfig.log_path` 非空时记录带毫秒时间戳的 `TX` / `RX` / `FLUSH` / `TX_ERROR` 行（原始十六进制）。
+- `tools/ui.py` 启动即写 `logs/f32c_ui_<时间戳>.log`；故障附加 `.fault.json`（Snapshot + 原因 + 驱动状态），关闭附加 `.close.json`；最终清理失败同时写 stderr。
+- `tools/tune.py` 每次运行写入 `logs/tune_*/`（`serial.log`、`samples.csv`、`run.json`）。
 
-### 5.8 可选 ZED Mini 相机 SDK
-
-- 相机与电机类别分离：命名空间 `f32c::camera`、类 `ZedMini`、独立库 `f32c_zed`；不创建对象或不调用 `open()` 就不会打开相机。
-- 核心电机库不依赖 ZED。默认 `F32C_BUILD_ZED=OFF`；启用命令：`cmake -S . -B build-zed -DF32C_BUILD_ZED=ON && cmake --build build-zed`。
-
-| API | 当前行为 |
-| --- | --- |
-| `open([serial])` | 打开首台 ZED Mini；可选序列号指定设备，拒绝其他 ZED 型号 |
-| `is_open()` | 返回相机是否已打开 |
-| `grab()` | 抓取一帧并记录 ZED 图像时间戳 |
-| `retrieve(View, ImageView*)` | 从该帧取 `Left`、`Right` 或 `SideBySide` CPU 图像 |
-| `serial_number()` | 返回当前相机序列号，关闭后为 0 |
-| `last_error()` | 返回最近一次失败原因 |
-| `close()` | 关闭相机并使已有 `ImageView` 失效 |
-
-- `ImageView` 是不拥有内存的 CPU BGRA8 视图，包含数据指针、宽高、stride、字节数和相机时间戳；同一视图再次 `retrieve()` 或 `close()` 后旧指针失效。
-- 参数沿用 `Project-Quest/quest-crt/scripts/check_zed.py` 的真机基线：HD720、60 FPS、`DEPTH_MODE::NONE`。
-- 真机验证：ZED Mini 序列号 `10661128`；左/右 `1280×720`、并排 `2560×720`，三路为同一时间戳。验证入口：`build-zed/f32c_zed_capture`。
-- UI 通过 `include/f32c/camera_c_api.h` / `src/zed_c_api.cpp` 延迟加载 `libf32c_zed.so`，只有点击“连接相机”才打开 ZED；当前系统 Python 运行 UI 还需要安装 `requirements-ui.txt` 中的 PySide6。
-- UI 可切换左眼/右眼/并排画面，运行时调节曝光、增益、亮度、对比度、饱和度、锐度，并恢复自动曝光/增益；设置由 ZED SDK 即时生效，不写入电机或仓库配置。
-- UI 使用一次必要的 CPU 拷贝将 C++ `ImageView` 转成 Qt `QImage/QPixmap`；当前界面刷新定时器约 30 FPS，SDK 原始取流仍为 HD720@60。
-
-### 5.9 UI 启动
-
-在仓库根目录执行：
+### 5.8 UI 启动
 
 ```bash
-cmake --build build
-cmake --build build-zed
-uv run --no-project --with 'PySide6>=6.5,<7' python examples/ui.py
+python3 -m pip install -r tools/requirements.txt     # PySide6>=6.5,<7
+python3 tools/ui.py [/dev/ttyACM0]
 ```
 
-如果当前 Python 环境已经安装 PySide6，最后一条可直接简化为 `python3 examples/ui.py`。UI 启动时自动识别两台电机；ZED 不会自动打开，需要点击“连接相机”。也可以把串口路径作为第一个参数传给 UI：`python3 examples/ui.py /dev/ttyACM0`。
-
----
+界面启动时连接电机，初始失能；“使能并到零位”会运动，确认活动空间后再点。
 
 ## 6. 变更记录
 
@@ -428,3 +387,6 @@ uv run --no-project --with 'PySide6>=6.5,<7' python examples/ui.py
 | 2026-10-17 | v3.2 | 发布0.3.1：高层默认保持目标改为yaw=0°、pitch=35°，共享DEFAULT_HOLD_POSITION；同步UI、文档与固定保持窗口。保留此前已请求的默认PI调整和移除误差幅度失能gate；固定保持窗口沿用现场显式PI，SDK默认值不再调整。新坐标不代表完成到位精度或外力保持验收；不置零、不保存电机参数。 |
 
 | 2026-10-17 | v3.3 | 发布0.3.2：将回零/保持实测配置统一到C++/C/Python默认值，HeadController/UI默认参考上限30°/s、360°/s²并限制yaw±60°；复用现有latest-wins、失效输入保持、权限与故障清理。新增Quest集成说明和流式输入回归；固定保持位0°/35°保留。连续Quest运动待用户在主仓验收，本次不发真机指令、不置零、不保存。 |
+
+| 2026-10-26 | v3.4 | 分支 `feat/graded-protection`：分级保护 level 1/2/3、提速（电机 15 RPM、加速度 2，软件 90°/s、720°/s²）、使能后回已存零位、修复调试整改项；见 `docs/archive/调试整改_2026-10-26.md`。仅离线测试，未通电。 |
+| 2026-10-26 | v4.0 | 分支 `refactor/two-layer`：重构为 `neck.driver`（硬件）+ `neck.control`（Neck/Trajectory/Supervisor）两层，纯 Python 标准库；删除 C++ SDK、C ABI、ZED 相机、旧 `f32c` Python 包与 wheel；UI/整定脚本迁至 `tools/` 且只依赖 `neck`；旧文档归档到 `docs/archive/`，新增 `docs/设计说明.md`。回溯点 tag `pre-refactor`（11985db）。Driver 角度折叠到 −180…180，角度编码四舍五入。离线 116 项测试通过，**未通电实测**；提速与直通模式 speed/accel 是否生效待台架。 |

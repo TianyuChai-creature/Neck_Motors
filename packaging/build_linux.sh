@@ -4,11 +4,13 @@
 set -e
 cd "$(dirname "$0")/.."
 OUT=${OUT:-build}
+APPIMAGE_OUT=${APPIMAGE_OUT:-release/F32C-Neck-UI-x86_64.AppImage}
 TOOL=${APPIMAGETOOL:-appimagetool}
 EXCLUDES="--exclude-module tkinter --exclude-module PySide6.QtNetwork --exclude-module PySide6.QtQml
  --exclude-module PySide6.QtQuick --exclude-module PySide6.QtPdf --exclude-module PySide6.QtSvg
  --exclude-module PySide6.QtOpenGL"
-rm -rf "$OUT" && mkdir -p "$OUT"
+rm -rf "$OUT" && mkdir -p "$OUT" "$(dirname "$APPIMAGE_OUT")"
+rm -f "$APPIMAGE_OUT"
 
 # one folder (feeds the AppImage) and one file
 pyinstaller --noconfirm --windowed --name f32c-neck-ui --paths . $EXCLUDES \
@@ -20,6 +22,6 @@ pyinstaller --noconfirm --onefile --windowed --name f32c-neck-ui-linux-x86_64 --
 mkdir -p "$OUT/AppDir/usr/bin"
 cp -r "$OUT/dist/f32c-neck-ui" "$OUT/AppDir/usr/bin/"
 cp packaging/AppRun packaging/f32c-neck-ui.desktop packaging/f32c-neck-ui.png "$OUT/AppDir/"
-ARCH=x86_64 "$TOOL" --appimage-extract-and-run --no-appstream "$OUT/AppDir" "$OUT/F32C-Neck-UI-x86_64.AppImage"
+ARCH=x86_64 "$TOOL" --appimage-extract-and-run --no-appstream "$OUT/AppDir" "$APPIMAGE_OUT"
 cp "$OUT/dist1/f32c-neck-ui-linux-x86_64" "$OUT/"
-echo "built in $OUT/"
+echo "built AppImage: $APPIMAGE_OUT"

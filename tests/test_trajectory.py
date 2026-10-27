@@ -18,6 +18,58 @@ def make(initial=Pose(0, 0), **config):
 
 
 class TrajectoryTests(unittest.TestCase):
+    def test_default_step_reaches_full_speed_within_80_ms(self):
+        for dt in (0.02, 0.033):
+            with self.subTest(dt=dt):
+                tracker = Trajectory()
+                commands = self.drive(tracker, (30, -30), 0, math.floor(0.08 / dt), dt)
+                self.assertGreaterEqual(commands[0].yaw, 0.2)
+                self.assertAlmostEqual(tracker.velocity[0], tracker.config.max_speed_deg_s)
+                self.assertAlmostEqual(tracker.velocity[1], -tracker.config.max_speed_deg_s)
+
+    def test_default_ramp_latency_limits_and_stop(self):
+        for dt in (0.02, 0.033):
+            with self.subTest(dt=dt):
+                tracker = Trajectory()
+                config = tracker.config
+                previous_v = (0.0, 0.0)
+                for i in range(1, 151):
+                    now = i * dt
+                    target = min(60 * now, 30)
+                    tracker.set_target(Pose(target, -target), now)
+                    command = tracker.step(now)
+                    if now <= 0.5:
+                        self.assertLessEqual((target - command.yaw) / 60, 0.03)
+                        self.assertLessEqual((target + command.pitch) / 60, 0.03)
+                    self.assertTrue(0 <= command.yaw <= 30.05)
+                    self.assertTrue(-30.05 <= command.pitch <= 0)
+                    for velocity, previous in zip(tracker.velocity, previous_v):
+                        self.assertLessEqual(abs(velocity), config.max_speed_deg_s + 1e-6)
+                        self.assertLessEqual(abs(velocity - previous) / dt,
+                                             config.max_accel_deg_s2 + 1e-4)
+                    previous_v = tracker.velocity
+                self.assertAlmostEqual(command.yaw, 30, delta=0.13)
+                self.assertAlmostEqual(command.pitch, -30, delta=0.13)
+
+    def test_default_static_noise_stays_within_one_output_tick(self):
+        for dt in (0.02, 0.033):
+            for initial in (Pose(0, 0), Pose(10.05, -10.05)):
+                with self.subTest(dt=dt, initial=initial):
+                    tracker = Trajectory()
+                    tracker.reset(initial, 0)
+                    rng = random.Random(52)
+                    commands = []
+                    for i in range(1, 1001):
+                        now = i * dt
+                        tracker.set_target(Pose(initial.yaw + rng.uniform(-0.06, 0.06),
+                                                initial.pitch + rng.uniform(-0.06, 0.06)), now)
+                        commands.append(tracker.step(now))
+                    for axis in ("yaw", "pitch"):
+                        values = [getattr(command, axis) for command in commands]
+                        self.assertLessEqual(max(values) - min(values), 0.1 + 1e-9)
+                    if initial == Pose(0, 0):
+                        self.assertEqual(len(set(commands)), 1)
+
     def tracker(self, initial=Pose(0, 0), **config):
         return make(initial, **config)
 

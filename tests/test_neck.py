@@ -327,7 +327,7 @@ class NeckTests(NeckCase):
         self.assertEqual(head.config.yaw_limits, (-60, 60))
         self.assertEqual(head.config.pitch_limits, (-180, 45))
         self.assertEqual(head.config.max_speed_deg_s, 90)
-        self.assertEqual(head.config.max_accel_deg_s2, 720)
+        self.assertEqual(head.config.max_accel_deg_s2, 1440)
         for _ in range(120):
             head.set_target(10, 35, at=self.now)
             head.set_target(-10, 20, at=self.now)

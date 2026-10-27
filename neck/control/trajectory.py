@@ -48,11 +48,11 @@ class TrajectoryConfig:
     pitch_limits: tuple[float, float] = (-180.0, 45.0)
     yaw_limits: tuple[float, float] | None = (-60.0, 60.0)
     max_speed_deg_s: float = 90.0
-    max_accel_deg_s2: float = 720.0
+    max_accel_deg_s2: float = 1440.0
     response_hz: float = 15.0
     min_cutoff_hz: float = 6.0
-    beta: float = 0.15
-    derivative_cutoff_hz: float = 1.0
+    beta: float = 0.3
+    derivative_cutoff_hz: float = 2.0
     deadband_deg: float = 0.05
     hysteresis_deg: float = 0.02
     stale_after_s: float = 0.2

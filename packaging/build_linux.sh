@@ -1,10 +1,10 @@
 #!/bin/sh
 # Build the Linux single-file executable and the AppImage from tools/ui.py.
-# Needs: pip install pyinstaller PySide6; appimagetool in PATH (or APPIMAGETOOL=/path/to/it).
+# Needs: pip install pyinstaller PySide6-Essentials; appimagetool in PATH (or APPIMAGETOOL=/path/to/it).
 set -e
 cd "$(dirname "$0")/.."
 OUT=${OUT:-build}
-APPIMAGE_OUT=${APPIMAGE_OUT:-release/F32C-Neck-UI-x86_64.AppImage}
+APPIMAGE_OUT=${APPIMAGE_OUT:-$OUT/F32C-Neck-UI-x86_64.AppImage}
 TOOL=${APPIMAGETOOL:-appimagetool}
 EXCLUDES="--exclude-module tkinter --exclude-module PySide6.QtNetwork --exclude-module PySide6.QtQml
  --exclude-module PySide6.QtQuick --exclude-module PySide6.QtPdf --exclude-module PySide6.QtSvg

@@ -6,7 +6,7 @@ F32C 双轴云台（颈部）控制。两台电机共用一条 TTL 串口总线�
 
 ## 准备
 
-- Linux、Python ≥ 3.10。界面工具另需 PySide6（`pip install -r tools/requirements.txt`）。
+- Linux、Python ≥ 3.10。界面工具另需 PySide6-Essentials（`pip install -r tools/requirements.txt`）。
 - 按[电机手册](docs/F32C无刷电机使用手册-2026-07-21.pdf)接线：电机供电 **8–15 V**，串口 **3.3 V TTL**，USB-TTL 与电机电源共地，**115200 baud**。
 - 两台电机 ID 分别为 1、2；零位存在电机 flash 里；可在界面里把当前位置“写零位”（两轴一起，不可撤销，见下）。首次使能前确认当前姿态附近有足够活动空间。
 - 当前用户需有串口读写权限。不指定串口时会扫描 `/dev/serial/by-id/*`、`/dev/ttyACM*`、`/dev/ttyUSB*`，只发查询，选中两个 ID 都应答的那个。
@@ -32,7 +32,7 @@ chmod +x F32C-Neck-UI-x86_64.AppImage && ./F32C-Neck-UI-x86_64.AppImage         
 - 打不开串口会弹窗提示并以非零码退出；日志写到 `~/f32c_logs/`。
 - **只做过假总线冒烟测试，未在真机和真实显示器上验证。**
 - Windows 暂无 .exe：驱动层用 `termios`，Windows 没有串口支持，需先补 Windows 串口层。
-- 自行构建：`pip install pyinstaller PySide6`，装好 appimagetool 后运行 `packaging/build_linux.sh`，产物在 `build/`。
+- 自行构建：`pip install pyinstaller PySide6-Essentials`，装好 appimagetool 后运行 `packaging/build_linux.sh`，产物在 `build/`。
 
 ## 最小用法
 
@@ -66,9 +66,8 @@ python3 tools/tune.py --axis pitch --speed-kp 10 --speed-ki 4 --pos-kp 40 --pos-
 
 ## 看懂它是怎么搭的
 
-- [`docs/回放.html`](docs/回放.html)：**双击用浏览器打开**。一次完整运行的回放（使能回零、跟随、过期、反馈中断降级、写零位、故障），同步显示角度曲线、phase/level 色条、层间数据流和每一帧串口字节。
 - [`docs/架构图.md`](docs/架构图.md)：分层依赖、tick 时序、使能、写零位、状态机、保护分级（Mermaid，GitHub/Notion 直接渲染）。
-- 重新生成回放：`python3 tools/replay.py`（约 13 秒，不需要硬件）。
+- 按需生成回放：`python3 tools/replay.py`（写入 `docs/回放.html`，不需要硬件）。
 
 ## 默认参数
 
@@ -94,7 +93,7 @@ neck/driver/   protocol.py port.py motor.py device.py types.py     层 1：硬�
 neck/control/  trajectory.py supervisor.py neck.py                 层 2：安全运动
 tools/         ui.py tune.py replay.py requirements.txt            操作员工具（ui/tune 只依赖 neck）
 tests/         假总线 bus.py、FakeDriver fakes.py、各层测试
-docs/          设计说明.md、架构图.md、回放.html、电机手册 PDF、archive/（旧版记录）
+docs/          设计说明.md、架构图.md、电机手册 PDF、archive/（旧版记录）
 agent.md       智能体角色、现场参数与变更记录
 ```
 

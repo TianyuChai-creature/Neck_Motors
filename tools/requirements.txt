@@ -1,2 +1,2 @@
-# Same Qt pin as UI_Prime_Hand (pyproject.toml / uv.lock: PySide6 6.11.1).
-PySide6>=6.5,<7
+# The UI uses QtCore and QtWidgets; it does not need Addons, PDF, or WebEngine.
+PySide6-Essentials>=6.5,<7

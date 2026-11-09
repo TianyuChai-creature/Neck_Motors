@@ -1,4 +1,4 @@
-"""tools/ui.py on Qt's offscreen platform with a FakeDriver; never touches hardware."""
+"""tools/ui.py on Qt's offscreen platform with a fake link; never touches hardware."""
 
 import io
 import json
@@ -12,9 +12,8 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication
 
-from neck.control import Neck
-from neck.driver import DriverError, Pose
-from tests.fakes import FakeDriver
+from neck import LinkError, Neck, NeckConfig, Pose
+from tests.fake_link import FakeLink
 from tools import ui
 
 
@@ -24,15 +23,11 @@ class UiTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self):
-        self.now = 100.0
-        clock = patch("time.monotonic", side_effect=lambda: self.now)
-        clock.start()
-        self.addCleanup(clock.stop)
         directory = TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.log = Path(directory.name) / "ui.log"
-        self.driver = FakeDriver(Pose(30, 45.2))
-        self.neck = Neck(self.driver)
+        self.link = FakeLink(Pose(30, 45))
+        self.neck = Neck(NeckConfig(control_period=0.01, max_lead=180), self.link)
         self.panel = ui.Panel(self.neck, self.log)
         self.addCleanup(self.quiet_close)
 
@@ -40,150 +35,79 @@ class UiTests(unittest.TestCase):
         with redirect_stderr(io.StringIO()):
             self.panel.close()
 
-    def run_ticks(self, count, until=None):
-        for _ in range(count):
-            self.now += 0.033
-            self.panel.step_targets()
-            if until and until():
-                return
-
     def test_initial_sliders_follow_measurement_and_limits_match_defaults(self):
         self.assertEqual(self.panel.pitch.slider.maximum(), 450)
         self.assertEqual((self.panel.yaw.slider.minimum(), self.panel.yaw.slider.maximum()), (-600, 600))
-        self.assertEqual(self.panel.pitch.deg(), 45.0)   # the slider stops at its own limit
+        self.assertEqual(self.panel.pitch.deg(), 45.0)
         self.assertFalse(self.neck.enabled)
-        self.assertEqual(self.driver.sent, [])
+        self.assertEqual(self.link.frames, [])
 
-    def test_enable_goes_to_zero_through_the_trajectory_while_the_sliders_stream_zero(self):
+    def test_enable_homes_and_turns_on_both_axes(self):
         self.panel.enable()
-        self.assertEqual(self.neck.snapshot.target, Pose(0, 0))
+        self.assertTrue(self.neck.enabled)
+        self.assertEqual(self.neck.status.target, Pose(0, 0))
+        self.assertEqual(self.link.enabled, {1, 2})
         self.assertEqual((self.panel.yaw.deg(), self.panel.pitch.deg()), (0, 0))
-        self.assertEqual(self.driver.sent, [])          # nothing sent until the first tick
-        self.run_ticks(500, until=lambda: abs(self.driver.measured.yaw) < .3 and abs(self.driver.measured.pitch) < .3)
-        self.assertLess(abs(self.driver.measured.pitch), .3)
-        self.assertEqual(self.neck.snapshot.phase, "following")
-        self.assertEqual(self.driver.disables, 0)
-        self.assertIn("跟随中", self.panel.status.text())
+        self.assertIn("使能", self.panel.status.text())
 
-    def test_sliders_are_a_live_stream_and_pitch_is_clipped(self):
+    def test_sliders_stream_and_pitch_is_clipped(self):
         self.panel.enable()
         self.panel.pitch.set_deg(90)
-        self.run_ticks(1)
-        self.assertEqual(self.neck.snapshot.target.pitch, 45)
-        self.panel.pitch.set_deg(-20)
         self.panel.yaw.set_deg(10)
-        self.run_ticks(1)
-        self.assertEqual(self.neck.snapshot.target, Pose(10, -20))
+        self.panel.step_targets()
+        self.assertEqual(self.neck.status.target, Pose(10, 45))
 
-    def test_pause_input_goes_stale_and_resume_follows_again(self):
+    def test_pause_input_changes_the_button_and_stops_streaming(self):
         self.panel.enable()
-        self.run_ticks(5)
+        self.panel.step_targets()
         self.panel.toggle_feed()
+        self.assertFalse(self.panel.feeding)
         self.assertEqual(self.panel.btn_feed.text(), "恢复输入")
-        self.run_ticks(12)                              # > 0.2 s without a target
-        self.assertEqual(self.neck.snapshot.phase, "stale")
-        self.assertIn("输入已暂停", self.panel.status.text())
-        self.panel.toggle_feed()
+        target = self.neck.status.target
         self.panel.yaw.set_deg(5)
-        self.run_ticks(2)
-        self.assertEqual(self.neck.snapshot.phase, "following")
-        self.assertEqual(self.neck.snapshot.target.yaw, 5)
+        self.panel.step_targets()
+        self.assertEqual(self.neck.status.target, target)
+        self.panel.toggle_feed()
+        self.panel.step_targets()
+        self.assertEqual(self.neck.status.target, Pose(5, 0))
 
     def test_disable_button_turns_torque_off(self):
         self.panel.enable()
         self.assertTrue(self.panel.disable())
         self.assertFalse(self.neck.enabled)
-        self.assertEqual(self.driver.disables, 1)
+        self.assertEqual(self.link.enabled, set())
 
-    def test_lost_feedback_degrades_then_faults_and_writes_a_record(self):
+    def test_write_zero_needs_confirmation_and_saves(self):
         self.panel.enable()
-        self.driver.read_error = True
-        self.run_ticks(1)
-        self.assertTrue(self.neck.enabled)
-        phases = set()
-        for _ in range(60):
-            self.run_ticks(1)
-            phases.add(self.neck.phase)
-            if not self.neck.enabled:
-                break
-        self.assertIn("degraded", phases)
-        self.assertFalse(self.neck.enabled)
-        record = json.loads(self.log.with_suffix(".fault.json").read_text())
-        self.assertEqual(record["phase"], "fault")
-        self.assertIn("reason", record)
-        self.assertIn("故障", self.panel.status.text())
-
-    def test_failed_cleanup_is_reported_on_close(self):
-        self.panel.enable()
-        self.driver.disable_error = True
-        with redirect_stderr(io.StringIO()) as errors:
-            self.panel.close()
-        record = json.loads(self.log.with_suffix(".close.json").read_text())
-        self.assertFalse(record["cleanup_completed"])
-        self.assertEqual(record["hardware_state"], "unknown")
-        self.assertIn("硬件状态未知", errors.getvalue())
-
-
-    def settle_at(self, yaw, pitch):
-        self.panel.yaw.set_deg(yaw)
-        self.panel.pitch.set_deg(pitch)
-        self.run_ticks(600, until=lambda: abs(self.driver.measured.yaw - yaw) < .2
-                       and abs(self.driver.measured.pitch - pitch) < .2)
-        self.run_ticks(10)
-
-    def test_write_zero_needs_confirmation_and_is_offered_unless_degraded_or_faulted(self):
-        self.panel.step_targets()
-        self.assertTrue(self.panel.btn_zero.isEnabled())           # off
         with patch.object(self.panel, "confirm_zero", return_value=False) as ask:
             self.panel.write_zero()
         self.assertIn("yaw 30.0", ask.call_args[0][0])
-        self.assertEqual((self.driver.zeros, self.driver.saves), (0, 0))
-        self.panel.enable()
-        self.run_ticks(3)
-        self.assertTrue(self.panel.btn_zero.isEnabled())           # following
-        self.driver.read_error = True
-        self.run_ticks(60)
-        self.assertFalse(self.neck.enabled)
-        self.assertFalse(self.panel.btn_zero.isEnabled())          # fault
-
-    def test_write_zero_while_following_holds_zeroes_and_resumes_the_stream_at_the_new_zero(self):
-        self.panel.enable()
-        self.settle_at(10.0, 5.0)
+        self.assertEqual((self.link.zeros, self.link.saves), (0, 0))
         with patch.object(self.panel, "confirm_zero", return_value=True):
             self.panel.write_zero()
-        self.assertEqual((self.driver.zeros, self.driver.saves, self.driver.disables), (1, 1, 0))
+        self.assertEqual((self.link.zeros, self.link.saves), (2, 2))
         self.assertIn("零位已写入", self.panel.status.text())
         self.assertEqual((self.panel.yaw.deg(), self.panel.pitch.deg()), (0, 0))
-        self.assertTrue(self.panel.feeding)
-        self.run_ticks(5)
-        self.assertEqual(self.neck.snapshot.phase, "following")
-        self.assertEqual(self.neck.snapshot.target, Pose(0, 0))
-        self.assertLess(abs(self.driver.measured.yaw), .3)
 
-    def test_unsettled_neck_refuses_zero_and_keeps_following(self):
+    def test_unsettled_neck_refuses_zero(self):
         self.panel.enable()
-        self.settle_at(10.0, 5.0)
-        self.driver.follow = False
-        self.driver.measured = Pose(15.0, 5.0)      # something is pushing the neck away
+        self.link.angles = {1: 40.0, 2: 45.0}
         with patch.object(self.panel, "confirm_zero", return_value=True):
             self.panel.write_zero()
         self.assertIn("写零位未完成", self.panel.status.text())
-        self.assertEqual(self.driver.zeros, 0)
+        self.assertEqual(self.link.zeros, 0)
         self.assertTrue(self.neck.enabled)
-        self.assertTrue(self.panel.feeding)
 
-    def test_failed_zero_write_faults_and_records(self):
+    def test_close_writes_a_report(self):
         self.panel.enable()
-        self.settle_at(3.0, 2.0)
-        self.driver.zero_error = True
-        with patch.object(self.panel, "confirm_zero", return_value=True):
-            self.panel.write_zero()
-        self.assertFalse(self.neck.enabled)
-        self.assertTrue(self.log.with_suffix(".fault.json").exists())
+        self.panel.close()
+        record = json.loads(self.log.with_suffix(".close.json").read_text())
+        self.assertTrue(record["cleanup_completed"])
+        self.assertTrue(self.link.closed)
 
     def test_open_failure_reports_and_exits_nonzero(self):
         err = io.StringIO()
-        with patch.object(ui.Driver, "open", side_effect=DriverError("no port")), \
+        with patch.object(ui, "Neck", side_effect=LinkError("no port")), \
                 patch.object(ui.QMessageBox, "critical") as box, \
                 patch.object(ui.sys, "argv", ["ui"]), \
                 patch.object(ui, "log_directory", return_value=self.log.parent), \

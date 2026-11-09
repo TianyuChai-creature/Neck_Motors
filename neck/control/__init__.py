@@ -1,4 +1,7 @@
-"""Layer 2: turn "where to look" into a safe sequence of angles."""
+"""Legacy control layer: kept for tune/load_compare/replay and regression tests.
+
+The main path is now ``neck.protocol`` + ``neck.link`` + ``neck.neck``.
+"""
 
 from .neck import ZERO, Neck, NeckError, Snapshot
 from .supervisor import ProtectionConfig

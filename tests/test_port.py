@@ -2,6 +2,7 @@ import errno
 import os
 from pathlib import Path
 import re
+import select
 import tempfile
 import time
 import unittest
@@ -69,7 +70,12 @@ class PortTests(unittest.TestCase):
 
         with patch("neck.driver.port.os.write", trickle):
             port.write(b"0123456789", time.monotonic() + 1)
-        self.assertEqual(os.read(self.master, 64), b"0123456789")
+        received = b""
+        deadline = time.monotonic() + 0.5
+        while len(received) < 10 and time.monotonic() < deadline:
+            if select.select([self.master], [], [], 0.1)[0]:
+                received += os.read(self.master, 64)
+        self.assertEqual(received, b"0123456789")
 
     def test_write_deadline_when_the_line_is_full(self):
         port = self.port(log_path=self.log)

@@ -4,9 +4,9 @@
 
 | 项 | 值 |
 | --- | --- |
-| 版本 | v4.6 |
+| 版本 | v4.7 |
 | 状态 | 活文档，施工中实时维护 |
-| 最近更新 | 2026-10-27 |
+| 最近更新 | 2026-11-09 |
 | 电机手册 | `docs/F32C无刷电机使用手册-2026-07-21.pdf` |
 | 自动注入 | Grok 默认加载的是 `AGENTS.md` / `AGENT.md`，**不是**本文件名。若要每轮会话自动读入，把本文件改名为 `AGENTS.md`，或在仓库根另放一份只含「先读 `agent.md`」的 `AGENTS.md`。 |
 
@@ -264,6 +264,8 @@
 
 ## 5. 当前仓库设计与运行链路
 
+> 2026-11-09：主 UI 与主控制路径已切换到简化核心 `neck/protocol.py` / `link.py` / `neck.py`（见 `docs/简化架构.md`）。下表是旧的 `neck.driver` / `neck.control`，保留给 `tune.py`、`load_compare.py`、`replay.py` 和回归测试。
+
 完整设计见 `docs/设计说明.md`（含伪代码与状态机）。本节只登记现场仍需遵守的事实。
 
 ### 5.1 分层
@@ -396,3 +398,4 @@ python3 tools/ui.py [/dev/ttyACM0]
 | 2026-10-26 | v4.4 | 构建并入库 `wheel/f32c_neck_motors-0.4.0-py3-none-any.whl`（纯 Python，约 24 KB，只含 `neck` 包；干净 venv 安装、导入通过）。旧 C++ wheel 已随重构删除，可从 tag `pre-refactor` 找回。仅离线测试，未通电。 |
 | 2026-10-26 | v4.5 | 新增 Linux 免安装发布物：`packaging/build_linux.sh`（PyInstaller 单文件 + AppImage），`tools/ui.py` 打不开串口时弹窗并退出码 1、冻结运行日志写 `~/f32c_logs/`（新增测试，共 146 项）。仅用假总线（pty）对冻结程序、AppImage 做过冒烟，未真机、未真实显示器；Windows .exe 因 `termios` 无法提供。 |
 | 2026-10-27 | v4.6 | 优化默认起步：软件加速度 720→1440°/s²，自适应低通 beta 0.15→0.3、导数截止频率 1→2 Hz；最低截止频率 6 Hz、响应 15 Hz、死区/输出滞回及全部保护保持。新增默认参数下 20/33 ms 起步、连续跟随、噪声及停止回归；同步说明。离线 149 项中 148 项通过，伪串口短读测试失败在修改前 HEAD 副本亦复现。跟随和点对点（含回零）均使用新参数；未通电、未重建发布物，待真机验收。 |
+| 2026-11-09 | v4.7 | 新增简化核心 `neck/protocol.py`、`link.py`、`neck.py`、`types.py`：非阻塞串口、1.5 ms 帧间隔、100 Hz 控制线程、二阶跟随、默认 hold 的失败策略、显式零位事务；主 UI 切换到新 `Neck`。旧 `neck.driver`/`neck.control` 保留给实验工具和回归测试。`max_speed`/`max_accel`/`max_lead` 支持 `None` 解除软件钳位，二阶跟随改用 1 ms 子步长。发布 `wheel/f32c_neck_motors-0.5.0-py3-none-any.whl`（只含新核心），新增 `docs/使用说明_0.5.0.md`；离线 175 项测试通过，未通电。 |

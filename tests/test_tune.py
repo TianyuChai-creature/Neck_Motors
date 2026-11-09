@@ -20,10 +20,17 @@ def run_with(driver, stdin, argv):
     with tempfile.TemporaryDirectory() as tmp:
         args = tune.parse_args(argv + ["--enable", "--output", tmp])
         out = io.StringIO()
+        clock = [100.0]
+
+        def monotonic():
+            clock[0] += 0.01
+            return clock[0]
+
         with patch.object(tune, "Driver", SimpleNamespace(open=lambda config: driver)), \
              patch("builtins.input", return_value="ENABLE"), \
              patch.object(tune.sys, "stdin", io.StringIO(stdin)), \
              patch.object(tune.select, "select", return_value=([1], [], [])), \
+             patch.object(tune.time, "monotonic", side_effect=monotonic), \
              contextlib.redirect_stdout(out):
             try:
                 tune.run(args)

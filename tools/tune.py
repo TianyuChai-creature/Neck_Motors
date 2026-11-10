@@ -22,12 +22,12 @@ sys.path.insert(0, str(ROOT))
 from neck.control import TrajectoryConfig
 from neck.driver import Driver, DriverConfig, Gains
 
-PITCH_TEST_MAX = TrajectoryConfig().pitch_limits[1]  # Desired-target cap, never a feedback boundary.
+PITCH_TEST_MIN, PITCH_TEST_MAX = TrajectoryConfig().pitch_limits  # Desired-target bounds, never feedback boundaries.
 
 
 def check_pitch_target(value):
-    if not math.isfinite(value) or not -180 <= value <= PITCH_TEST_MAX:
-        raise ValueError(f"pitch test target must be within [-180, {PITCH_TEST_MAX}] degrees")
+    if not math.isfinite(value) or not PITCH_TEST_MIN <= value <= PITCH_TEST_MAX:
+        raise ValueError(f"pitch test target must be within [{PITCH_TEST_MIN}, {PITCH_TEST_MAX}] degrees")
 
 
 def wrap180(value):
@@ -110,8 +110,9 @@ def parse_args(argv=None):
         lo, hi = bounds
         if not (math.isfinite(lo) and math.isfinite(hi) and -180 <= lo < hi <= 180):
             parser.error("mechanical ranges must be finite and within [-180, 180], MIN < MAX")
-    if args.pitch_range is not None and args.pitch_range[1] > PITCH_TEST_MAX:
-        parser.error(f"pitch test range must not exceed {PITCH_TEST_MAX} degrees")
+    if args.pitch_range is not None and not (
+            PITCH_TEST_MIN <= args.pitch_range[0] < args.pitch_range[1] <= PITCH_TEST_MAX):
+        parser.error(f"pitch test range must lie within [{PITCH_TEST_MIN}, {PITCH_TEST_MAX}] degrees")
     for name in ("hz", "move_speed", "tolerance", "settle_dwell"):
         value = getattr(args, name)
         if not math.isfinite(value) or value <= 0:

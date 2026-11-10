@@ -26,7 +26,7 @@ class UiTests(unittest.TestCase):
         directory = TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.log = Path(directory.name) / "ui.log"
-        self.link = FakeLink(Pose(30, 45))
+        self.link = FakeLink(Pose(30, 40))
         self.neck = Neck(NeckConfig(control_period=0.01, max_lead=180), self.link)
         self.panel = ui.Panel(self.neck, self.log)
         self.addCleanup(self.quiet_close)
@@ -36,9 +36,9 @@ class UiTests(unittest.TestCase):
             self.panel.close()
 
     def test_initial_sliders_follow_measurement_and_limits_match_defaults(self):
-        self.assertEqual(self.panel.pitch.slider.maximum(), 450)
+        self.assertEqual((self.panel.pitch.slider.minimum(), self.panel.pitch.slider.maximum()), (-450, 430))
         self.assertEqual((self.panel.yaw.slider.minimum(), self.panel.yaw.slider.maximum()), (-600, 600))
-        self.assertEqual(self.panel.pitch.deg(), 45.0)
+        self.assertEqual(self.panel.pitch.deg(), 40.0)
         self.assertFalse(self.neck.enabled)
         self.assertEqual(self.link.frames, [])
 
@@ -55,7 +55,7 @@ class UiTests(unittest.TestCase):
         self.panel.pitch.set_deg(90)
         self.panel.yaw.set_deg(10)
         self.panel.step_targets()
-        self.assertEqual(self.neck.status.target, Pose(10, 45))
+        self.assertEqual(self.neck.status.target, Pose(10, 43))
 
     def test_pause_input_changes_the_button_and_stops_streaming(self):
         self.panel.enable()

@@ -41,7 +41,7 @@ class NeckCase(unittest.TestCase):
 
 
 class NeckTests(NeckCase):
-    def test_pitch_target_clips_and_initial_feedback_above_45_is_accepted(self):
+    def test_pitch_target_clips_and_initial_feedback_above_43_is_accepted(self):
         head = self.neck(Pose(359.9, 45.2))
         self.assertAlmostEqual(head.snapshot.measured.yaw, -.1)
         self.assertAlmostEqual(head.snapshot.command.pitch, 45.2)
@@ -49,7 +49,7 @@ class NeckTests(NeckCase):
         self.tick()
         self.assertTrue(all(v <= 45.2 for v in pitch_writes(self.driver)))
         head.set_target(0, 80)
-        self.assertEqual(head.snapshot.target.pitch, 45)
+        self.assertEqual(head.snapshot.target.pitch, 43)
         for _ in range(5): self.tick()
         self.assertTrue(head.enabled)
         self.assertTrue(all(v <= 45.2 for v in pitch_writes(self.driver)))
@@ -325,7 +325,7 @@ class NeckTests(NeckCase):
     def test_default_following_profile_latest_input_stale_hold_and_resume(self):
         head = self.neck(Pose(0, 35))
         self.assertEqual(head.config.yaw_limits, (-60, 60))
-        self.assertEqual(head.config.pitch_limits, (-180, 45))
+        self.assertEqual(head.config.pitch_limits, (-45, 43))
         self.assertEqual(head.config.max_speed_deg_s, 90)
         self.assertEqual(head.config.max_accel_deg_s2, 1440)
         for _ in range(120):
@@ -343,7 +343,7 @@ class NeckTests(NeckCase):
         self.assertEqual(self.driver.sent, sent)
         self.now += 1
         head.set_target(120, 90, at=self.now)
-        self.assertEqual(head.snapshot.target, Pose(60, 45))
+        self.assertEqual(head.snapshot.target, Pose(60, 43))
         self.tick()
         self.assertEqual(head.snapshot.phase, "following")
         self.assertEqual(self.driver.disables, 0)

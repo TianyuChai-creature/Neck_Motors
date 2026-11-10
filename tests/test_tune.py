@@ -62,7 +62,8 @@ class TuneTests(unittest.TestCase):
         self.assertEqual(args.config.yaw_gains, tune.DriverConfig().yaw_gains)
         self.assertEqual(tune.DriverConfig().pitch_gains.speed_kp, 10)
         for extra in (["--speed-kp", "257"], ["--hz", "nan"], ["--pitch-range", "20", "10"],
-                      ["--pitch-range", "0", "60"], ["--move-speed", "61"]):
+                      ["--pitch-range", "0", "60"], ["--pitch-range", "-50", "0"],
+                      ["--move-speed", "61"]):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 tune.parse_args(ARGV + extra)
 
@@ -93,7 +94,7 @@ class TuneTests(unittest.TestCase):
         self.assertEqual(driver.disables, 1)
         self.assertIs(driver.state, DriverState.CLOSED)
         self.assertTrue(driver.sent)
-        self.assertTrue(all(p is None or p <= 45 for _, p in driver.sent))
+        self.assertTrue(all(p is None or p <= 43 for _, p in driver.sent))
 
     def test_partial_enable_failure_still_disables_and_closes(self):
         driver = FakeDriver(Pose(0, 42))
@@ -109,7 +110,7 @@ class TuneTests(unittest.TestCase):
         record, error, out = run_with(driver, "t 60\nq\n", ARGV)
         self.assertIsNone(error)
         self.assertIn("Command rejected", out)
-        self.assertTrue(all(p is None or p <= 45 for _, p in driver.sent))
+        self.assertTrue(all(p is None or p <= 43 for _, p in driver.sent))
 
     def test_ramp_moves_only_the_chosen_axis(self):
         driver = FakeDriver(Pose(0, 0))

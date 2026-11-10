@@ -2,7 +2,7 @@
 
 F32C 双轴云台（颈部）控制。两台电机共用一条 TTL 串口总线，默认 **yaw = ID 1**、**pitch = ID 2**。
 
-纯 Python 标准库。当前主路径是简化核心：`neck/protocol.py` 组帧，`neck/link.py` 非阻塞串口与收发调度，`neck/neck.py` 100 Hz 跟随、使能/失能和置零。旧的 `neck.driver` / `neck.control` 保留给实验工具与回归参考。设计与状态机见 [`docs/简化架构.md`](docs/简化架构.md)，安装与 API 用法见 [`docs/使用说明_0.5.0.md`](docs/使用说明_0.5.0.md)。
+纯 Python 标准库。当前主路径是简化核心：`neck/protocol.py` 组帧，`neck/link.py` 非阻塞串口与收发调度，`neck/neck.py` 100 Hz 跟随、使能/失能和置零。旧的 `neck.driver` / `neck.control` 保留给实验工具与回归参考。设计与状态机见 [`docs/简化架构.md`](docs/简化架构.md)，安装与 API 用法见 [`docs/使用说明_0.6.0.md`](docs/使用说明_0.6.0.md)。
 
 ## 准备
 
@@ -14,12 +14,12 @@ F32C 双轴云台（颈部）控制。两台电机共用一条 TTL 串口总线�
 ## 安装为包（可选）
 
 ```bash
-pip install wheel/f32c_neck_motors-0.5.0-py3-none-any.whl     # 纯 Python，只含简化核心的 neck 包，约 17 KB
+pip install wheel/f32c_neck_motors-0.6.0-py3-none-any.whl     # 纯 Python，只含简化核心的 neck 包，约 18 KB
 ```
 
-**0.5.0 是简化核心版本，仅做过离线测试，未通电实测**；台架验证（100 Hz、1.5 ms 帧间隔、置零写 flash）前请当作预览版。安装、API、失败策略与置零流程见 [`docs/使用说明_0.5.0.md`](docs/使用说明_0.5.0.md)。重新构建：`pip wheel . --no-deps -w wheel`（`tools/` 与测试不在包里）。
+**0.6.0 已做 yaw 提速台架 A/B：同一组 ±50° 动作下 yaw 45 RPM 实测峰值约 91°/s、0.5 s 持续约 88°/s；pitch 保持 15 RPM。** 100 Hz、1.5 ms 帧间隔、长时间负载变化和置零写 flash 仍需继续验收。安装、API、失败策略与置零流程见 [`docs/使用说明_0.6.0.md`](docs/使用说明_0.6.0.md)。重新构建：`pip wheel . --no-deps -w wheel`（`tools/` 与测试不在包里）。
 
-**旧 `wheel/0.4.0` 和已发布 AppImage 仍是旧两层实现**，没有 `NeckConfig` / `SerialLink` / 新 `Neck` API；0.5.0 wheel 只包含新核心，旧 `neck.driver` / `neck.control` 只在源码仓库里供实验工具使用。
+**旧 `wheel/0.4.0` 和已发布 AppImage 仍是旧两层实现**，没有 `NeckConfig` / `SerialLink` / 新 `Neck` API；`0.5.0` 是上一版简化核心，`0.6.0` 只包含新核心，旧 `neck.driver` / `neck.control` 只在源码仓库里供实验工具使用。
 
 ## 免安装运行 UI（Linux x86_64）
 
@@ -88,15 +88,15 @@ SDK 轨迹、电机参数和保护默认值不改。任何 SDK 保护事件（�
 | 项 | yaw（ID 1） | pitch（ID 2） |
 | --- | --- | --- |
 | 速度 PI / 位置 PI | 40/4、42/0 | 10/4、40/0 |
-| 电机速度 / 加速度 | 15 RPM / 2 | 15 RPM / 2 |
-| 软件限位 | ±60° | −180°…45° |
+| 电机速度 / 加速度 | 45 RPM / 2 | 15 RPM / 2 |
+| 软件限位 | ±60° | −45°…43° |
 | 软件速度 / 加速度 | 90°/s / 1440°/s² | 90°/s / 1440°/s² |
 
-起步采用限加速度的二阶平滑跟随（响应 20 Hz），最大 90°/s、1440°/s²；输出按 0.1° 协议量化，不再叠加 1€ 低通、死区或制动距离求解。新参数仅通过离线测试，尚未实机验收；已有 wheel/AppImage 需重新构建才包含此次修改。
+起步采用限加速度的二阶平滑跟随（响应 20 Hz），最大 90°/s、1440°/s²；输出按 0.1° 协议量化，不再叠加 1€ 低通、死区或制动距离求解。2026-11-10 台架 A/B 中 yaw 45 RPM 实测峰值约 91°/s、0.5 s 持续约 88°/s，pitch 保持 15 RPM。
 
-需要解除软件速度/加速度钳位时，可设 `NeckConfig(max_speed=None, max_accel=None, max_lead=None)`；二阶跟随仍保留，机械限位仍生效。先小角度试，详见 [`docs/使用说明_0.5.0.md`](docs/使用说明_0.5.0.md)。
+需要解除软件速度/加速度钳位时，可设 `NeckConfig(max_speed=None, max_accel=None, max_lead=None)`；二阶跟随仍保留，机械限位仍生效。先小角度试，详见 [`docs/使用说明_0.6.0.md`](docs/使用说明_0.6.0.md)。
 
-**提速（15 RPM、90°/s）与直通模式下速度/加速度是否生效尚未实机验证**；所有代码目前只做过离线测试（pty 假总线 + FakeLink/FakeDriver）。
+**2026-11-10 台架 A/B：yaw 15→30→45 RPM 时实测峰值约 48→91→91°/s，0.5 s 持续约 41→88→88°/s；pitch 保持 15 RPM。直通模式下速度/加速度的完整行为仍需更多工况验证**；其余代码和长期工况仍需实机验收。
 
 ## 测试
 
@@ -112,7 +112,7 @@ neck/driver/     device.py motor.py port.py protocol.py types.py   旧层 1（�
 neck/control/    neck.py trajectory.py supervisor.py               旧层 2（实验工具）
 tools/           ui.py tune.py load_compare.py replay.py            操作员工具
 tests/           fake_link.py bus.py fakes.py 及各层测试
-docs/            简化架构.md、使用说明_0.5.0.md、设计说明.md、架构图.md、电机手册 PDF、archive/
+docs/            简化架构.md、使用说明_0.6.0.md、设计说明.md、架构图.md、电机手册 PDF、archive/
 agent.md         智能体角色、现场参数与变更记录
 ```
 

@@ -57,7 +57,7 @@ class AxisRow(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(QLabel(name))
         self.slider = QSlider(Qt.Orientation.Horizontal)
-        self.slider.setRange(*((-600, 600) if name == "yaw" else (-1800, 450)))
+        self.slider.setRange(*((-600, 600) if name == "yaw" else (-450, 430)))
         self.slider.valueChanged.connect(lambda _v: self.cmd.setText(f"{self.deg():.1f}°"))
         layout.addWidget(self.slider, 1)
         self.cmd = QLabel("0.0°")
@@ -97,7 +97,7 @@ class Panel(QWidget):
 
         box = QGroupBox("两轴电机")
         layout = QVBoxLayout(box)
-        layout.addWidget(QLabel("使能后保持当前位置；yaw ±60°，pitch -180°…45°"))
+        layout.addWidget(QLabel("使能后保持当前位置；yaw ±60°，pitch -45°…43°"))
         buttons = QHBoxLayout()
         self.btn_en = QPushButton("使能并到零位")
         self.btn_dis = QPushButton("失能")

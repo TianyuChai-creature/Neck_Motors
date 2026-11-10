@@ -132,8 +132,10 @@ class Neck:
                 self._send_disable_both()
                 self._torque = "off"
                 self._send_gains()
-                self._start_axis(self.config.yaw_id, pose.yaw)
-                self._start_axis(self.config.pitch_id, pose.pitch)
+                self._start_axis(self.config.yaw_id, pose.yaw,
+                                 self.config.yaw_speed_rpm, self.config.yaw_accel)
+                self._start_axis(self.config.pitch_id, pose.pitch,
+                                 self.config.pitch_speed_rpm, self.config.pitch_accel)
             except LinkError as exc:
                 self._last_error = str(exc)
                 cleanup = self._disable_locked(f"enable_failed: {exc}")
@@ -308,11 +310,11 @@ class Neck:
             self.link.write_frame(p.pos_kp(addr, gains.pos_kp))
             self.link.write_frame(p.pos_ki(addr, gains.pos_ki))
 
-    def _start_axis(self, addr: int, deg: float) -> None:
+    def _start_axis(self, addr: int, deg: float, speed_rpm: int, accel: int) -> None:
         self.link.write_frame(p.enable(addr))
         self.link.write_frame(p.mode_direct(addr))
-        self.link.write_frame(p.speed_rpm(addr, self.config.speed_rpm))
-        self.link.write_frame(p.accel(addr, self.config.accel))
+        self.link.write_frame(p.speed_rpm(addr, speed_rpm))
+        self.link.write_frame(p.accel(addr, accel))
         self.link.write_frame(p.angle(addr, deg))
 
     def _disable_locked(self, reason: str) -> CommandResult:

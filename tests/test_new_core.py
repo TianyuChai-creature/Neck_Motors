@@ -75,16 +75,33 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(link.zeros, 0)
         self.assertEqual(link.saves, 0)
 
+    def test_default_config_is_the_bench_setup(self):
+        config = NeckConfig()
+        self.assertEqual((config.yaw_limits, config.pitch_limits), ((-60, 60), (-45, 43)))
+        self.assertEqual((config.yaw_speed_rpm, config.pitch_speed_rpm), (45, 15))
+        self.assertEqual((config.yaw_accel, config.pitch_accel), (2, 2))
+        self.assertEqual((config.max_speed, config.max_accel), (90, 1440))
+
+    def test_enable_sends_per_axis_motor_speed_and_accel(self):
+        neck, link = self.make()
+        neck.enable()
+        rpm = {frame[1]: int.from_bytes(frame[3:5], "big")
+               for frame in link.frames if frame[2] == 0x01}
+        accel = {frame[1]: int.from_bytes(frame[3:5], "big")
+                 for frame in link.frames if frame[2] == 0x07}
+        self.assertEqual(rpm, {1: 45, 2: 15})
+        self.assertEqual(accel, {1: 2, 2: 2})
+
     def test_target_is_clipped_and_ramps_to_the_limit(self):
         neck, link = self.make(max_lead=180)
         neck.enable()
-        self.assertEqual(neck.set_target(100, 100), Pose(60, 45))
+        self.assertEqual(neck.set_target(100, 100), Pose(60, 43))
         now = time.monotonic()
         for step in range(1, 150):
             neck.set_target(100, 100, at=now + step * 0.01)
             neck.update(now + step * 0.01)
         self.assertAlmostEqual(neck.status.command.yaw, 60, delta=0.5)
-        self.assertAlmostEqual(neck.status.command.pitch, 45, delta=0.5)
+        self.assertAlmostEqual(neck.status.command.pitch, 43, delta=0.5)
         self.assertTrue(any(frame[2] == 0x03 for frame in link.frames))
 
     def test_speed_and_accel_limits_can_be_disabled(self):

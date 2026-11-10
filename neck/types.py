@@ -71,15 +71,18 @@ class NeckConfig:
     feedback_timeout: float = 0.1    # no fresh angle for this long -> link not OK
     log_path: str | None = None
 
-    # Motor setup
-    speed_rpm: int = 15
-    accel: int = 2
+    # Motor setup. Yaw needs more headroom than pitch; the 2026-11-10 bench
+    # A/B showed ~45 RPM for yaw vs ~15 RPM for pitch (pitch is gravity-assisted).
+    yaw_speed_rpm: int = 45
+    pitch_speed_rpm: int = 15
+    yaw_accel: int = 2
+    pitch_accel: int = 2
     yaw_gains: Gains = Gains(40, 4, 42, 0)
     pitch_gains: Gains = Gains(10, 4, 40, 0)
 
     # Motion
     yaw_limits: tuple[float, float] | None = (-60.0, 60.0)
-    pitch_limits: tuple[float, float] = (-180.0, 45.0)
+    pitch_limits: tuple[float, float] = (-45.0, 43.0)
     max_speed: float | None = 90.0      # None: no software velocity clamp
     max_accel: float | None = 1440.0    # None: no software acceleration clamp
     response_hz: float = 20.0
@@ -105,10 +108,14 @@ class NeckConfig:
                 raise ValueError(f"{name} must be an integer between 1 and 255")
         if self.yaw_id == self.pitch_id:
             raise ValueError("motor IDs must be distinct")
-        if type(self.speed_rpm) is not int or not 0 <= self.speed_rpm <= 1000:
-            raise ValueError("speed_rpm must be an integer between 0 and 1000")
-        if type(self.accel) is not int or not 0 <= self.accel <= 65535:
-            raise ValueError("accel must be an integer between 0 and 65535")
+        for name in ("yaw_speed_rpm", "pitch_speed_rpm"):
+            value = getattr(self, name)
+            if type(value) is not int or not 0 <= value <= 1000:
+                raise ValueError(f"{name} must be an integer between 0 and 1000")
+        for name in ("yaw_accel", "pitch_accel"):
+            value = getattr(self, name)
+            if type(value) is not int or not 0 <= value <= 65535:
+                raise ValueError(f"{name} must be an integer between 0 and 65535")
         if self.yaw_limits is not None:
             object.__setattr__(self, "yaw_limits", _limits(self.yaw_limits, "yaw_limits"))
         object.__setattr__(self, "pitch_limits", _limits(self.pitch_limits, "pitch_limits"))

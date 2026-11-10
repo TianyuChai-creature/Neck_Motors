@@ -45,7 +45,7 @@ class TrajectoryConfig:
     """Speeds are deg/s, accelerations deg/s^2. Limits bound new targets; a start pose
     outside them is accepted and only ever leads inward."""
 
-    pitch_limits: tuple[float, float] = (-180.0, 45.0)
+    pitch_limits: tuple[float, float] = (-45.0, 43.0)
     yaw_limits: tuple[float, float] | None = (-60.0, 60.0)
     max_speed_deg_s: float = 90.0
     max_accel_deg_s2: float = 1440.0

@@ -78,7 +78,7 @@ class ControllerTests(unittest.TestCase):
     def test_default_config_is_the_bench_setup(self):
         config = NeckConfig()
         self.assertEqual((config.yaw_limits, config.pitch_limits), ((-60, 60), (-45, 43)))
-        self.assertEqual((config.yaw_speed_rpm, config.pitch_speed_rpm), (45, 15))
+        self.assertEqual((config.yaw_speed_rpm, config.pitch_speed_rpm), (45, 45))
         self.assertEqual((config.yaw_accel, config.pitch_accel), (2, 2))
         self.assertEqual((config.max_speed, config.max_accel), (90, 1440))
 
@@ -89,7 +89,7 @@ class ControllerTests(unittest.TestCase):
                for frame in link.frames if frame[2] == 0x01}
         accel = {frame[1]: int.from_bytes(frame[3:5], "big")
                  for frame in link.frames if frame[2] == 0x07}
-        self.assertEqual(rpm, {1: 45, 2: 15})
+        self.assertEqual(rpm, {1: 45, 2: 45})
         self.assertEqual(accel, {1: 2, 2: 2})
 
     def test_target_is_clipped_and_ramps_to_the_limit(self):

@@ -71,10 +71,10 @@ class NeckConfig:
     feedback_timeout: float = 0.1    # no fresh angle for this long -> link not OK
     log_path: str | None = None
 
-    # Motor setup. Yaw needs more headroom than pitch; the 2026-11-10 bench
-    # A/B showed ~45 RPM for yaw vs ~15 RPM for pitch (pitch is gravity-assisted).
+    # Motor setup. Both axes use 45 RPM after the 2026-11-10 bench A/B; pitch
+    # remains gravity-loaded, so its full-range overshoot still needs validation.
     yaw_speed_rpm: int = 45
-    pitch_speed_rpm: int = 15
+    pitch_speed_rpm: int = 45
     yaw_accel: int = 2
     pitch_accel: int = 2
     yaw_gains: Gains = Gains(40, 4, 42, 0)
